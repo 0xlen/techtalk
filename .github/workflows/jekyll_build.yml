@@ -1,0 +1,22 @@
+name: Build and deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  github-pages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Fix git safe.directory in container
+        run: |
+          # this is to fix GIT not liking owner of the checkout dir
+          # https://github.com/actions/runner/issues/2033
+          mkdir -p /home/runner/work/_temp/_github_home && printf "[safe]\n\tdirectory = /github/workspace" > /home/runner/work/_temp/_github_home/.gitconfig
+      - uses: helaili/jekyll-action@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target_branch: 'gh-pages'

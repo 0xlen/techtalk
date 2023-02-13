@@ -1,0 +1,29 @@
+# Top Menu
+topmenu:
+
+- title: 首頁
+  url: ""
+
+- title: 關於
+  url: "about/"
+
+- title: English
+  url: "?"
+  class: "ml-2 btn btn-dark text-white px-3"
+  external: false
+
+# - title: 聯繫
+#   url: "contact/"
+
+
+# Footer Menu
+footermenu:
+
+- title: 回首頁
+  url: ""
+
+- title: Privacy Policy
+  url: "privacy-policy/"
+
+# - title: Contact
+#   url: "contact/"

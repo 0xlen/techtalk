@@ -1,0 +1,29 @@
+# Top Menu
+topmenu:
+
+- title: Home
+  url: ""
+
+- title: About
+  url: "about/"
+
+- title: 中文 Chinese
+  url: "tw/"
+  class: "ml-2 btn btn-dark text-white px-3"
+  external: false
+
+# - title: Contact
+#   url: "contact/"
+
+
+# Footer Menu
+footermenu:
+
+- title: Home
+  url: ""
+
+- title: Privacy Policy
+  url: "privacy-policy/"
+
+# - title: Contact
+#   url: "contact/"
