@@ -1,6 +1,7 @@
 title: "Eason Tech Talk"
 email: support@easontechtalk.com
 timezone: UTC
+url: "https://easontechtalk.com"
 baseurl: ""
 permalink: "/:title/"
 logo: 'assets/images/logo.png'
