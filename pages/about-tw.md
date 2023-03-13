@@ -1,9 +1,9 @@
 ---
 layout: page
-title: 你好
+title: 關於
 permalink: "/about/"
-image: assets/images/screenshot.png
+image: assets/images/logo-inspired.png
 lang: tw
 ---
 
-中文簡介
+任何諮詢及意見回饋，請聯繫：[support@easontechtalk.com](support@easontechtalk.com)
