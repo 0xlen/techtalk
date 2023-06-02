@@ -8,7 +8,11 @@
 <title>{{ page.title }} | {{site.title}}</title>
 
 <!-- Handle Multiple Language SEO -->
-<meta property="og:url" content="{{site.url}}/{{site.active_lang}}{{page.url}}" />
+{% if site.active_lang == site.default_lang %}
+<!--meta property="og:url" content="{{site.url}}{{page.url}}" /-->
+{% else %}
+<!--meta property="og:url" content="{{site.url}}/{{site.active_lang}}{{page.url}}" /-->
+{% endif %}
 {% I18n_Headers https://easontechtalk.com %}
 <!-- Handle Multiple Language SEO End -->
 

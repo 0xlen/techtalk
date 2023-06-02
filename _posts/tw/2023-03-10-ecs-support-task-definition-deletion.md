@@ -5,6 +5,7 @@ author: eason
 categories: [Amazon Elastic Container Service (ECS), Container]
 image: assets/images/2023/ecs-support-task-definition-deletion/cover.png
 lang: tw
+canonical_url: https://easontechtalk.com/tw/ecs-support-task-definition-deletion/
 ---
 
 自 2015 年 Amazon ECS 正式釋出，提供了支援在 AWS 上運行容器工作負載的成熟解決方案。然而，僅支援 DeregisterTaskDefinition API[^DeregisterTaskDefinition-API] 可以取消註冊特定的任務定義 (Task Definition) 版本。

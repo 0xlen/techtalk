@@ -5,6 +5,7 @@ author: eason
 categories: [Amazon Elastic Container Service (ECS), Container]
 image: assets/images/2023/launch-ecs-task-with-bottlerocket/cover.jpg
 lang: tw
+canonical_url: https://easontechtalk.com/tw/launch-ecs-task-with-bottlerocket/
 ---
 
 Amazon Elastic Container Service (ECS) 是用於管理在 Amazon Web Services (AWS) 上以容器化方式運行的容器調度服務。類似於 Kubernetes、Docker Swarm 等集成方案，Amazon ECS 提供了一種簡單的功能性來幫助你啟動和擴展容器化應用程式，這樣簡單的特性使得 ECS 成為許多企業用戶快速且有效部署其容器應用程式的理想選擇。

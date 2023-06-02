@@ -5,6 +5,7 @@ author: eason
 categories: [Kubernetes, Security]
 image: assets/images/2023/nsa-kubernetes-hardening-guide/cover.png
 lang: tw
+canonical_url: https://easontechtalk.com/tw/nsa-kubernetes-hardening-guide/
 ---
 
 Kubernetes 作為容器化調度平台已經逐漸在許多企業和生產環境中屬於不可或缺的基礎建設一部分。然而，由於其複雜性，Kubernetes 的執行環境也面臨著許多安全挑戰和潛在的問題。美國國安局（NSA）與網路安全暨基礎架構安全署（CISA）在 2022 年釋出了一份名為 Kubernetes Hardening Guidance 的網路安全報告 [^nsa-cisa-press] (完整文件 [^k8s-hardening-guide])。作為強化 Kubernetes 指南，指南中除了旨在為 NSA、CISA 以及對於美國聯邦和公家機關作為運行 Kubernetes 集群關鍵基礎建設的相關強化方針，更詳述了 Kubernetes 環境潛藏的安全威脅，並提供了相關設定指引，以盡可能地降低其安全風險。對於 Kubernetes 管理者來說，該指南實則一份十分有用的參考資源。
