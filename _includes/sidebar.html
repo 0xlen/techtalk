@@ -1,4 +1,13 @@
 <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	{% if page.toc %}
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			{% toc %}
+		</div>
+	{% endif %}
+	<!-- End Table of Content (toc) -->
+
     <div class="sidebar-section">
         <h5><span>Newsletter</span></h5>
         {% include newsletter.html %}

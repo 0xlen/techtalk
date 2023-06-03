@@ -20,6 +20,7 @@ group :jekyll_plugins do
     gem 'jekyll-seo-tag'
     gem 'jekyll-archives'
     gem 'jekyll-polyglot'
+    gem 'jekyll-toc'
     gem 'tzinfo-data'
     gem 'tzinfo'
 end
