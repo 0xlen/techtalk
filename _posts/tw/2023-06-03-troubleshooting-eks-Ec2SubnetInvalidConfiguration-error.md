@@ -61,7 +61,7 @@ $ aws eks describe-nodegroup --nodegroup-name broken-nodegroup --cluster eks --r
 
 按照錯誤例外的定義 [^eks-issues]，可以簡單得知這個錯誤通常是由於 EKS Managed Node Group 所指定的 subnet 沒有啟用 auto-assign public IP address (自動分配 IP 地址) 導致。
 
-預設情況下，當 Managed Node Group 在建立 EC2 instances 時，會需要依賴 Subnet 本身啟用這項功能，如果 subnet 沒有啟用 auto-assign public IP address，EC2 instances 會無法獲取到公開的 IP 位址 (Public IPv4)，因此將無法與 Internet 進行通訊，這會導致。因此這衍生了兩個不同的使用情境：Public Subnet (公有子網) 跟 Private Subnet (私有子網)。
+預設情況下，當 Managed Node Group 在建立 EC2 instances 時，會需要依賴 Subnet 本身啟用這項功能，如果 subnet 沒有啟用 auto-assign public IP address，EC2 instances 會無法獲取到公開的 IP 位址 (Public IPv4)，因此將無法與 Internet 進行通訊。EKS Managed Node Groups 的這項檢查同時衍生了兩個不同的使用情境：Public Subnet (公有子網) 跟 Private Subnet (私有子網)。
 
 Public Subnet 與 Private Subnet 是指在 Amazon Virtual Private Cloud (VPC) 中設定不同的 Subnet。其中，Public Subnet 意味著在這個 Subnet 中的資源可以直接與 Internet 進行通訊、連到公開的網際網路，而 Private Subnet 則無法直接與 Internet 進行通訊：
 
