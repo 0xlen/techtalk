@@ -14,7 +14,7 @@ However, during the process of adding or upgrading Managed Node Groups, it is po
 
 To check whether there is an `Ec2SubnetInvalidConfiguration` error in EKS Managed Node Groups, you can confirm whether there are any health issues through the EKS Console or AWS CLI commands. For example, by clicking on the "Compute" tab under `Cluster` > `Node groups` to enter the detailed page of the node group, you can check whether there is any error message in the `Health Issues` tab:
 
-![/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-create-failed.png](/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-create-failed.png)
+![Nodegroup create failed](/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-create-failed.png)
 
 According to the EKS Managed Node Group upgrade process [^eks-managed-nodegroup-update-behavior], if node upgrades or new nodes are stuck after 15-20 minutes, there may be some problems with the work nodes during operation, and there is an opportunity to further troubleshoot possible causes through this information after a period of time. The example below shows the use of AWS CLI commands:
 
@@ -64,7 +64,7 @@ By default, when Managed Node Groups create EC2 instances, they need to rely on 
 
 Public Subnet and Private Subnet refer to different subnets set in Amazon Virtual Private Cloud (VPC). Public Subnet means that resources in this subnet can communicate directly with the Internet and connect to the public Internet, while Private Subnet cannot communicate with the Internet directly:
 
-![/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/subnet-diagram.png](/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/subnet-diagram.png)
+![Subnet diagram](/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/subnet-diagram.png)
 
 (Image Source: Amazon Virtual Private Cloud User Guide [^subnet-diagram])
 
@@ -99,7 +99,7 @@ For Amazon EKS, the VPC associated subnet properties still apply to the principl
 
 For example, the following is an example of a node group in the environment that is in a `DEGRADED` state due to subnet configuration issues after running Node Groups for a period of time, and there is an error message:
 
-![/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-degraded.png](/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-degraded.png)
+![Nodegroup degraded](/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-degraded.png)
 
 ## Solutions and Steps
 
@@ -111,7 +111,7 @@ To solve this problem, if you choose Public Subnet to deploy Managed Node Groups
 2. Choose the Subnet you want to use > Edit Subnet Settings, and select "Enable auto-assign public IPv4 address".
 3. Check the option and click Save.
 
-![/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/enable-auto-assign-up-settings.png](/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/enable-auto-assign-up-settings.png)
+![Enable auto assign settings](/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/enable-auto-assign-up-settings.png)
 
 After completing these steps, if the node status fails, you can delete the failed Managed Node Groups and create a new one again, selecting the above Subnet. When EKS starts these EC2 instances, they can obtain Public IP addresses correctly based on the Subnet settings.
 
@@ -121,7 +121,7 @@ If the problem you encounter is not caused by the subnet not enabling auto-assig
 
 In the previous content, we described an error that can occur when encountering an expected private subnet. This is usually because EKS tries to start or check the subnet used by Managed Node Groups and assumes that the subnet belongs to the Public Subnet property due to the route pointing to the Internet Gateway, rather than the expected Private Subnet property, resulting in the following exception message:
 
-![/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/incorrect-private-subnet-route.png](/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/incorrect-private-subnet-route.png)
+![Incorrect private subnet route](/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/incorrect-private-subnet-route.png)
 
 To resolve this issue, you can configure the Route Table corresponding to the Private Subnet correctly, preserve internal requests within the VPC, and set the correct non-VPC request routing (such as removing the Internet Gateway for the `0.0.0.0/0` route) to point to other targets such as the [NAT Gateway](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html), which provides the ability to access the internet only internally from outside, ensuring that the worker nodes can still download images from other sources (such as Docker Hub) and interact with the EKS API Server when starting up.
 

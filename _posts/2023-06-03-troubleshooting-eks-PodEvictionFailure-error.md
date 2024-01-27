@@ -14,11 +14,11 @@ The `PodEvictionFailure` error is a common error encountered during node group u
 
 To check if there are any `PodEvictionFailure` errors in the EKS Managed Node Groups, you can use the EKS Console or AWS CLI command to check for any issues. For example, by clicking the `Compute` tab under Cluster, then clicking on `Node groups`, you can check if there are any error messages related to the upgrade events in the `Update history` tab:
 
-![/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png](/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png)
+![Nodegroup update history](/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png)
 
 By clicking on an individual upgrade event, you can see more detailed information about the error:
 
-![/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-detail.png](/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-detail.png)
+![Nodegroup update details](/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-detail.png)
 
 According to the EKS Managed Node Group upgrade process [^eks-managed-nodegroup-update-behavior], if the upgrade or creation of a node takes more than 15-20 minutes, it is likely that there are problems with the working nodes. After a period of time, it is usually possible to further investigate the possible causes using this information. Here's an example of using an AWS CLI command:
 
@@ -242,7 +242,7 @@ fields @timestamp, @message
 
 By viewing the audit logs, you can further confirm whether there is any specific information related to Pod Disruption Budget in the events of disabling the Pod:
 
-![/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png](/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png)
+![Nodegroup update history](/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png)
 
 If the upgrade fails due to PDB, you can modify or remove the PDB and try to upgrade again:
 
