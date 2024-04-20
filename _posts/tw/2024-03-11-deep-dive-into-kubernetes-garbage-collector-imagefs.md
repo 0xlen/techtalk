@@ -3,7 +3,7 @@ layout: post
 title:  "深入研究 Kubernetes Garbage Collection：容器映像清除機制"
 author: eason
 categories: [Kubernetes]
-image: assets/images/2024//deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg
+image: assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg
 lang: tw
 canonical_url: https://easontechtalk.com/tw/deep-dive-into-kubernetes-garbage-collector-imagefs/
 ---
@@ -65,7 +65,7 @@ kubelet[2298]: I0226 12:04:17.157231    2298 image_gc_manager.go:310] "Disk usag
 
 這項機制在 Kubernetes 1.23 版本支持了這項 `PodAndContainerStatsFromCRI` 測試功能 (Feature Gate [^feature-gate])，允許 kubelet 透過 CRI 介面與 Container runtime 互動獲取容器相關的指標和數據，但預設都是關閉 [^kubelet-metric-data]，並且使用 cadvisor 作為主要的收集來源。
 
-![](/assets/images/2024//deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg)
+![](/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg)
 
 但不論使用哪種方式收集，根據 kubelet 提供的對應數據統計，其統計結果皆可以使用 kubelet 本身提供的 API 獲得這項資訊，例如：
 

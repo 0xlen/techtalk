@@ -3,7 +3,7 @@ layout: post
 title:  "Deep dive into Kubernetes Garbage Collector: Container Image"
 author: eason
 categories: [Kubernetes]
-image: assets/images/2024//deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg
+image: assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg
 ---
 
 How does the kubelet trigger the Garbage Collection mechanism? In this article, we delve into the Kubernetes Garbage Collection and understand how kubelet implements the image cleanup mechanism. Additionally, we will also explore how to monitor imageFS usage accurately.
@@ -65,7 +65,7 @@ If we further analyze the core code, we can find that `statsProvider` can have s
 
 This mechanism is supported in Kubernetes 1.23 version with the `PodAndContainerStatsFromCRI` feature gate [^feature-gate], which allows kubelet to interact with the Container runtime through the CRI interface to obtain container-related metrics and data, but it is turned off by default [^kubelet-metric-data] and uses cadvisor as the main collection source.
 
-![/assets/images/2024//deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg](/assets/images/2024//deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg)
+![/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg](/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg)
 
 Regardless of the collection method used, corresponding data statistics provided by kubelet can be retrieved using the API provided by kubelet itself, as shown below:
 
