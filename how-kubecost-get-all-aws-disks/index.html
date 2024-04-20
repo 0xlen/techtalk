@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>How Kubecost Retrieves Unused Disk Information across an Entire AWS Account | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/how-kubecost-get-all-aws-disks/" /-->
+
+<meta http-equiv="Content-Language" content="en">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>How Kubecost Retrieves Unused Disk Information across an Entire AWS Account | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="How Kubecost Retrieves Unused Disk Information across an Entire AWS Account" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="This article will dive into how Kubecost collects information on unused disks across an entire AWS account. Kubecost is a popular tool for managing cost and resources in Kubernetes environments. We will explain how Kubecost identify and collect unused disk resources." />
+<meta property="og:description" content="This article will dive into how Kubecost collects information on unused disks across an entire AWS account. Kubecost is a popular tool for managing cost and resources in Kubernetes environments. We will explain how Kubecost identify and collect unused disk resources." />
+<link rel="canonical" href="https://easontechtalk.com/how-kubecost-get-all-aws-disks/" />
+<meta property="og:url" content="https://easontechtalk.com/how-kubecost-get-all-aws-disks/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2024-04-20T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png" />
+<meta property="twitter:title" content="How Kubecost Retrieves Unused Disk Information across an Entire AWS Account" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2024-04-20T00:00:00+00:00","datePublished":"2024-04-20T00:00:00+00:00","description":"This article will dive into how Kubecost collects information on unused disks across an entire AWS account. Kubecost is a popular tool for managing cost and resources in Kubernetes environments. We will explain how Kubecost identify and collect unused disk resources.","headline":"How Kubecost Retrieves Unused Disk Information across an Entire AWS Account","image":"https://easontechtalk.com/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/how-kubecost-get-all-aws-disks/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/how-kubecost-get-all-aws-disks/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/" alt="Home">Home</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/about/" alt="About">About</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/tw/" alt="中文 Chinese">中文 Chinese</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png" alt="How Kubecost Retrieves Unused Disk Information across an Entire AWS Account">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/categories#amazon-elastic-kubernetes-service-eks">Amazon Elastic Kubernetes Service (EKS)</a>
+                        </li>
+                        
+                        <li>
+                         <a href="/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">How Kubecost Retrieves Unused Disk Information across an Entire AWS Account</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>This article will dive into how Kubecost collects information on unused disks across an entire AWS account. Kubecost is a popular tool for managing cost and resources in Kubernetes environments. We will explain how Kubecost identify and collect unused disk resources.</p>
+
+<h2 id="kubecost-introduction">Kubecost Introduction</h2>
+
+<p>Kubecost is a project developed by Stackwatch, specifically for monitoring and analyzing the cost of Kubernetes. It offers both an open-source version (Opencost) and a paid subscription version (Kubecost Enterprise). Its primary use case lies in achieving overall cost visibility for Kubernetes clusters. The open-source version of Kubecost limits the storage period of billing results to 15 days. If you need to keep the metrics for more than 15 days, you will need to upgrade to the paid version.</p>
+
+<p>Amazon EKS supports a custom version of Kubecost (Amazon EKS-optimized Kubecost), co-developed by AWS and Kubecost. With Kubecost, you can view the cost distribution of the cluster, understand which applications or services are consuming the most resources, and allow monitoring based on Kubernetes resources (including Pods, Nodes, Namespaces, and Labels) for detailed cost monitoring and analysis. This helps teams visualize Amazon EKS invoice details, allocate costs, and charge fees to organizational units such as application teams.</p>
+
+<p>In addition, Kubecost can provide information on unused disk space, which is very helpful for resource management and cost control.</p>
+
+<h2 id="how-kubecost-retrieves-unused-disk-information">How Kubecost Retrieves Unused Disk Information</h2>
+
+<p>An interesting question arose around the design of Kubecost’s unused disk information feature. One day, a user installing the Amazon EKS-optimized version of Kubecost found that Kubecost could obtain the unused disk information for the entire account.</p>
+
+<p>This user wondered if the default permissions were too broad. Besides installing Kubecost according to the EKS official document, the user did not provide any account-level permissions, thus raising this question out of curiosity about potential security concerns:</p>
+
+<pre><code class="language-bash">helm upgrade -i kubecost oci://public.ecr.aws/kubecost/cost-analyzer --version kubecost-version \
+    --namespace kubecost --create-namespace \
+    -f https://raw.githubusercontent.com/kubecost/cost-analyzer-helm-chart/develop/cost-analyzer/values-eks-cost-monitoring.yaml
+</code></pre>
+
+<p>To understand the mechanism by which Kubecost obtains all EBS disks under an AWS account, we first need to analyze how Kubecost obtains disk information and understand the relevant permission settings involved.</p>
+
+<p>In order to demystify how it works and do analysis, I used the open-source project opencost as sample, specifically version 2.2. By digging further, the implementation of looking idle AWS EBS disks is defined in the <code>GetOrphanedResources()</code> method <sup id="fnref:kubecost-getorphanedresource" role="doc-noteref"><a href="#fn:kubecost-getorphanedresource" class="footnote" rel="footnote">1</a></sup>:</p>
+
+<pre><code class="language-go">func (aws *AWS) GetOrphanedResources() ([]models.OrphanedResource, error) {
+	volumes, volumesErr := aws.getAllDisks()
+	addresses, addressesErr := aws.getAllAddresses()
+
+  ...
+
+	for _, volume := range volumes {
+		if aws.isDiskOrphaned(volume) {
+			cost, err := aws.findCostForDisk(volume)
+			if err != nil {
+				return nil, err
+			}
+      ...
+
+</code></pre>
+
+<p>If we look further, we can see that <code>getAllDisks()</code> is a method that traverses all regions under the account through a loop, and performs another operation to <code>getDisksForRegion()</code> to get the information in a single region <sup id="fnref:kubecost-getdisk" role="doc-noteref"><a href="#fn:kubecost-getdisk" class="footnote" rel="footnote">2</a></sup>. Here, the <code>DescribeVolumes</code> API provided by EC2 <sup id="fnref:aws-api-ec2-describe-volumes" role="doc-noteref"><a href="#fn:aws-api-ec2-describe-volumes" class="footnote" rel="footnote">3</a></sup> is used to obtain this information:</p>
+
+<pre><code class="language-go">func (aws *AWS) getDisksForRegion(ctx context.Context, region string, maxResults int32, nextToken *string) (*ec2.DescribeVolumesOutput, error) {
+	aak, err := aws.GetAWSAccessKey()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, err := aak.CreateConfig(region)
+	if err != nil {
+		return nil, err
+	}
+
+	cli := ec2.NewFromConfig(cfg)
+	return cli.DescribeVolumes(ctx, &amp;ec2.DescribeVolumesInput{
+		MaxResults: &amp;maxResults,
+		NextToken:  nextToken,
+	})
+}
+
+func (aws *AWS) getAllDisks() ([]*ec2Types.Volume, error) {
+	regions := aws.Regions()
+	volumeCh := make(chan *ec2.DescribeVolumesOutput, len(regions))
+
+	// Get volumes from each AWS region
+	for _, r := range regions {
+		// Fetch volume response and send results and errors to their
+		// respective channels
+		go func(region string) {
+		   ...
+
+			// Query for first page of volume results
+			resp, err := aws.getDisksForRegion(context.TODO(), region, 1000, nil)
+      ...
+
+</code></pre>
+
+<p>So, the answer seems obvious. Kubecost still relies on the <code>DescribeVolumes</code> provided by AWS to obtain this information at the underlying implementation. But where is this permission from?</p>
+
+<p>In the deployment of Kubecost, the kubecost-cost-analyzer includes a <code>cost-model</code> container application that is responsible for calling the AWS API in the subroutine mentioned above:</p>
+
+<pre><code class="language-bash">NAME                                              READY   STATUS    RESTARTS   AGE
+pod/kubecost-cost-analyzer-688d699b88-w5d8f       0/4     Pending   0          21s
+pod/kubecost-forecasting-6c6456668f-tlhv7         0/1     Pending   0          20s
+pod/kubecost-prometheus-server-6b584dc478-6kd7q   0/1     Pending   0          20s
+
+NAME                                 TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)             AGE
+service/kubecost-aggregator          ClusterIP   10.100.10.104    &lt;none&gt;        9004/TCP            23s
+service/kubecost-cloud-cost          ClusterIP   10.100.193.45    &lt;none&gt;        9005/TCP            23s
+service/kubecost-cost-analyzer       ClusterIP   10.100.26.236    &lt;none&gt;        9003/TCP,9090/TCP   22s
+service/kubecost-forecasting         ClusterIP   10.100.169.241   &lt;none&gt;        5000/TCP            22s
+service/kubecost-prometheus-server   ClusterIP   10.100.185.108   &lt;none&gt;        80/TCP              21s
+
+NAME                                         READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/kubecost-cost-analyzer       0/1     1            0           22s
+deployment.apps/kubecost-forecasting         0/1     1            0           22s
+deployment.apps/kubecost-prometheus-server   0/1     1            0           21s
+
+NAME                                                    DESIRED   CURRENT   READY   AGE
+replicaset.apps/kubecost-cost-analyzer-688d699b88       1         1         0       22s
+replicaset.apps/kubecost-forecasting-6c6456668f         1         1         0       21s
+replicaset.apps/kubecost-prometheus-server-6b584dc478   1         1         0       21s
+
+</code></pre>
+
+<p>Therefore, to figure out where the permission come from, there’s a high probability that we need to look into two permission settings:</p>
+
+<ul>
+  <li>Service Account: Whether the IAM Role for Service Account (IRSA) feature supported by EKS is being used.</li>
+  <li>The IAM permissions (Instance Profile IAM Role) of the Worker Node (EC2 instance) itself.</li>
+</ul>
+
+<p>In the earlier Helm installation steps, we didn’t set any related IRSA permissions. As expected, no IAM Role is associated when I’m looking the service account details. The default Service Account for kubecost is only used to grant Kubecost permissions to access Kubernetes resources (for example, getting permissions for resources like Pod, Node, PV, PVC, and so on). This is defined in the associated Helm Chart <sup id="fnref:kubecost-cost-analyzer-cluster-role-template" role="doc-noteref"><a href="#fn:kubecost-cost-analyzer-cluster-role-template" class="footnote" rel="footnote">4</a></sup>.</p>
+
+<pre><code class="language-bash">$ kubectl get pod/kubecost-cost-analyzer-688d699b88-w5d8f -n kubecost -o yaml | grep -i serviceaccount
+  serviceAccount: kubecost-cost-analyzer
+  serviceAccountName: kubecost-cost-analyzer
+
+$ kubectl describe sa/kubecost-cost-analyzer -n kubecost
+Name:                kubecost-cost-analyzer
+Namespace:           kubecost
+Labels:              app=cost-analyzer
+                     app.kubernetes.io/instance=kubecost
+                     app.kubernetes.io/managed-by=Helm
+                     app.kubernetes.io/name=cost-analyzer
+                     helm.sh/chart=cost-analyzer-2.2.0
+Annotations:         meta.helm.sh/release-name: kubecost
+                     meta.helm.sh/release-namespace: kubecost
+Image pull secrets:  &lt;none&gt;
+Mountable secrets:   &lt;none&gt;
+Tokens:              &lt;none&gt;
+Events:              &lt;none&gt;
+
+</code></pre>
+
+<p>So if it’s not an IRSA setting, we can be more certain that it’s probably related to the IAM permissions associated with the EC2 instance itself. By default, every EKS Worker Node will use some default IAM permission settings (IAM Policy), which include <sup id="fnref:eks-worker-node-iam-role" role="doc-noteref"><a href="#fn:eks-worker-node-iam-role" class="footnote" rel="footnote">5</a></sup>:</p>
+
+<ul>
+  <li><a href="https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonEKSWorkerNodePolicy.html">AmazonEKSWorkerNodePolicy</a></li>
+  <li><a href="https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonEKS_CNI_Policy.html">AmazonEKS_CNI_Policy</a></li>
+</ul>
+
+<p>The purpose of these permissions is to enable necessary Kubernetes applications running on EC2 to work properly (for example: kubelet and CNI Plugin). Therefore, it can be expected that when deploying Kubecost to run on a Worker Node, it will usually use the default IAM permissions corresponding to the EKS node. From the default policy <code>AmazonEKSWorkerNodePolicy</code>, we can notice the following information:</p>
+
+<pre><code class="language-json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeVolumes",
+                ...
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+
+</code></pre>
+
+<p>To verify whether it’s related to the aforementioned permissions, I added a denial policy to the IAM Role corresponding to the Worker Node for testing:</p>
+
+<pre><code class="language-json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "TestKubeCostFindAllDisks",
+            "Effect": "Deny",
+            "Action": "ec2:DescribeVolumes",
+            "Resource": "*"
+        }
+    ]
+}
+
+</code></pre>
+
+<p>Not surprisingly, when Kubecost attempts to extract disk data, the anticipated error can be observed:</p>
+
+<pre><code class="language-bash">$ kubectl logs $KUBECOST_POD cost-model -n kubecost
+
+INF unable to get addresses: %s logged 5 times: suppressing future logs
+WRN unable to get disks: operation error EC2: DescribeVolumes, https response error StatusCode: 403, RequestID: b1eb2ada-8813-441c-a2f9-64847e14f6cd, api error UnauthorizedOperation: You are not authorized to perform this operation.
+WRN unable to get disks: operation error EC2: DescribeVolumes, https response error StatusCode: 403, RequestID: 46053624-5c2d-4ef3-a145-f01917eeec84, api error UnauthorizedOperation: You are not authorized to perform this operation.
+</code></pre>
+
+<p>Therefore, we can understand how Kubecost is able to retrieve EBS disk resources from all regions without the need to assign relevant permissions when installing it. The default IAM Role of the worker node associated <code>ec2:DescribeVolumes</code> permission that ensures the necessary operational permissions for the kubelet and corresponding components in the EKS-Optimized AMI. This permission is used to obtain operational information related to the EC2 instance and associated resources in the region (for example, the requirements for deploying EBS Volumes using the EBS CSI Driver) and acts as part of the data for related Kubernetes object resources (for example, PersistentVolume and PersistentVolumeClaim), only provides read access and does not include any write operations, hence it cannot modify any EBS resources.</p>
+
+<p>When kubecost is running, it scans for idle EBS resources (EBS volumes not attached to any EC2 instance) in the AWS account region using the Worker Node’s own IAM identity and permissions. These resources are then filtered out for cost-saving optimization recommendations.</p>
+
+<h2 id="summary">Summary</h2>
+
+<p>This article dive into how Kubecost collects information on unused disks across an AWS account, addressing potential user concerns after installing Kubecost and discovering that it can access unused disk information for the entire account. In addition to conducting relevant code analyses, I also explain how Kubecost interacts with the AWS API and uses a variety of techniques and methods to identify and collect unused disk resources.</p>
+
+<p>Upon thorough analysis and verification, we confirm that Kubecost uses the IAM identity and permissions of the Worker Node itself to obtain information on unused EBS disks within an AWS account. This approach does not overstep or violate security principles, as Kubecost only uses the default <code>ec2:DescribeVolumes</code> permission, a necessary permission to ensure the operation of Kubernetes, and only has read access without the write operation to modify any EBS resources.</p>
+
+<p>Hope this helps and provides readers with a deeper understanding of how Kubecost retrieves information on AWS unused disks, and clarify related security concerns.</p>
+
+<h2 id="references">References</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:kubecost-getorphanedresource" role="doc-endnote">
+      <p><a href="https://github.com/opencost/opencost/blob/088f891d8ed6c48d688c31028542ea7ac34331ed/pkg/cloud/aws/provider.go#L1836C1-L1858C1">opencost v2.2 GetOrphanedResources()</a> <a href="#fnref:kubecost-getorphanedresource" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubecost-getdisk" role="doc-endnote">
+      <p><a href="https://github.com/opencost/opencost/blob/088f891d8ed6c48d688c31028542ea7ac34331ed/pkg/cloud/aws/provider.go#L1702-L1834">opencost v2.2 Get Disks</a> <a href="#fnref:kubecost-getdisk" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:aws-api-ec2-describe-volumes" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVolumes.html">AWS API - EC2 DescribeVolumes</a> <a href="#fnref:aws-api-ec2-describe-volumes" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubecost-cost-analyzer-cluster-role-template" role="doc-endnote">
+      <p><a href="https://github.com/kubecost/cost-analyzer-helm-chart/blob/b6d32237dbb80b10dd851dbcc07441171b27a701/cost-analyzer/templates/cost-analyzer-cluster-role-template.yaml">kubecost v2.2 cost-analyzer-cluster-role-template.yaml</a> <a href="#fnref:kubecost-cost-analyzer-cluster-role-template" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-worker-node-iam-role" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/create-node-role.html">Amazon EKS node IAM role</a> <a href="#fnref:eks-worker-node-iam-role" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2024-04-20">20 Apr 2024</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs/">&laquo; Deep dive into Kubernetes Garbage Collector: Container Image</a>
+                </div>
+              
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#kubecost-introduction">Kubecost Introduction</a></li>
+<li class="toc-entry toc-h2"><a href="#how-kubecost-retrieves-unused-disk-information">How Kubecost Retrieves Unused Disk Information</a></li>
+<li class="toc-entry toc-h2"><a href="#summary">Summary</a></li>
+<li class="toc-entry toc-h2"><a href="#references">References</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+
+<!-- Begin Default Newsletter Signup Form -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>Sign up to get the update</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail Address" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('Request has been sent!').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('You are in the mailing list!').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/" alt="Home">Home</a>
+    </li>
+    
+    <li>
+      <a href="/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

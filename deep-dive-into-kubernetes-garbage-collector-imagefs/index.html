@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>Deep dive into Kubernetes Garbage Collector: Container Image | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs/" /-->
+
+<meta http-equiv="Content-Language" content="en">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Deep dive into Kubernetes Garbage Collector: Container Image | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="Deep dive into Kubernetes Garbage Collector: Container Image" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="How does the kubelet trigger the Garbage Collection mechanism? In this article, we delve into the Kubernetes Garbage Collection and understand how kubelet implements the image cleanup mechanism. Additionally, we will also explore how to monitor imageFS usage accurately." />
+<meta property="og:description" content="How does the kubelet trigger the Garbage Collection mechanism? In this article, we delve into the Kubernetes Garbage Collection and understand how kubelet implements the image cleanup mechanism. Additionally, we will also explore how to monitor imageFS usage accurately." />
+<link rel="canonical" href="https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs/" />
+<meta property="og:url" content="https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2024-03-11T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" />
+<meta property="twitter:title" content="Deep dive into Kubernetes Garbage Collector: Container Image" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2024-03-11T00:00:00+00:00","datePublished":"2024-03-11T00:00:00+00:00","description":"How does the kubelet trigger the Garbage Collection mechanism? In this article, we delve into the Kubernetes Garbage Collection and understand how kubelet implements the image cleanup mechanism. Additionally, we will also explore how to monitor imageFS usage accurately.","headline":"Deep dive into Kubernetes Garbage Collector: Container Image","image":"https://easontechtalk.com/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/" alt="Home">Home</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/about/" alt="About">About</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/tw/" alt="中文 Chinese">中文 Chinese</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" alt="Deep dive into Kubernetes Garbage Collector: Container Image">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">Deep dive into Kubernetes Garbage Collector: Container Image</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>How does the kubelet trigger the Garbage Collection mechanism? In this article, we delve into the Kubernetes Garbage Collection and understand how kubelet implements the image cleanup mechanism. Additionally, we will also explore how to monitor imageFS usage accurately.</p>
+
+<p>When the kubelet detects that the available space in imageFs (the filesystem storing container images) falls below a predetermined threshold, it triggers Garbage Collection, i.e., it begins to clear out unneeded container images to free up space. This threshold can be set via the kubelet’s configuration option <code>--image-gc-high-threshold</code> (<code>imageGCHighThresholdPercent</code>), the default value of which is 85%. This means that when the available space in imageFs drops below 85% of the total space, kubelet begins image cleanup work, and one might notice similar prompts in the log like the following:</p>
+
+<pre><code class="language-bash">kubelet[2298]: I0226 11:59:17.153440    2298 image_gc_manager.go:310] "Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold" usage=93 highThreshold=85 amountToFree=69382155468 lowThreshold=80
+
+kubelet[2298]: I0226 12:04:17.157231    2298 image_gc_manager.go:310] "Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold" usage=97 highThreshold=85 amountToFree=88325110988 lowThreshold=80
+
+</code></pre>
+
+<h2 id="how-kubelet-calculates-container-image-space-and-triggers-garbage-collection">How kubelet Calculates Container Image Space and Triggers Garbage Collection</h2>
+
+<p>To understand the Garbage Collection mechanism of kubelet for managing container images, we first need to analyze how kubelet calculates disk space and sets corresponding configuration parameters to trigger cleanup tasks.</p>
+
+<p>Taking the core code of Kubernetes 1.29 as an example <sup id="fnref:k8s-1-29-image-gc-manager" role="doc-noteref"><a href="#fn:k8s-1-29-image-gc-manager" class="footnote" rel="footnote">1</a></sup>. In this section, the <code>usagePercent</code> calculation method is defined, and a condition is provided to check whether it exceeds the value of <code>im.policy.HighThresholdPercent</code>. From this snippet, we can deduce that the logic here is related to triggering image cleanup behavior according to the aforementioned parameter settings:</p>
+
+<pre><code class="language-go">  // Get disk usage on disk holding images.
+  fsStats, _, err := im.statsProvider.ImageFsStats(ctx)
+  if err != nil {
+    return err
+  }
+
+	var capacity, available int64
+	if fsStats.CapacityBytes != nil {
+		capacity = int64(*fsStats.CapacityBytes)
+	}
+	if fsStats.AvailableBytes != nil {
+		available = int64(*fsStats.AvailableBytes)
+	}
+
+  ...
+
+  // If over the max threshold, free enough to place us at the lower threshold.
+  usagePercent := 100 - int(available*100/capacity)
+  if usagePercent &gt;= im.policy.HighThresholdPercent {
+    amountToFree := capacity*int64(100-im.policy.LowThresholdPercent)/100 - available
+    klog.InfoS("Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold", "usage", usagePercent, "highThreshold", im.policy.HighThresholdPercent, "amountToFree", amountToFree, "lowThreshold", im.policy.LowThresholdPercent)
+    freed, err := im.freeSpace(ctx, amountToFree, freeTime, images)
+    if err != nil {
+      return err
+    }
+
+    if freed &lt; amountToFree {
+      err := fmt.Errorf("Failed to garbage collect required amount of images. Attempted to free %d bytes, but only found %d bytes eligible to free.", amountToFree, freed)
+      im.recorder.Eventf(im.nodeRef, v1.EventTypeWarning, events.FreeDiskSpaceFailed, err.Error())
+      return err
+    }
+  }
+
+</code></pre>
+
+<p>Worth mentioning is that the variables <code>capacity</code> and <code>available</code> represent the total and remaining available space respectively, and in practice, they actually refer to the <code>CapacityBytes</code> and <code>AvailableBytes</code> values of <code>statsProvider.ImageFsStats</code>.</p>
+
+<p>If we further analyze the core code, we can find that <code>statsProvider</code> can have slightly different data for fetching the storage space corresponding to the image depending on the implementation (Image Filesystem, hereinafter referred to as imageFS). There are two different implementations of ImageFS in the kubelet core code, one using CRI to fetch and the other using cadvisor. Therefore, in the core code directory, you can notice the existence of two different implementations, <code>cri_stats_provider.go</code> <sup id="fnref:k8s-1-29-cri-stats-provider" role="doc-noteref"><a href="#fn:k8s-1-29-cri-stats-provider" class="footnote" rel="footnote">2</a></sup> and <code>cadvisor_stats_provider.go</code> <sup id="fnref:k8s-1-29-cadvisor-stats-provider" role="doc-noteref"><a href="#fn:k8s-1-29-cadvisor-stats-provider" class="footnote" rel="footnote">3</a></sup>.</p>
+
+<p>This mechanism is supported in Kubernetes 1.23 version with the <code>PodAndContainerStatsFromCRI</code> feature gate <sup id="fnref:feature-gate" role="doc-noteref"><a href="#fn:feature-gate" class="footnote" rel="footnote">4</a></sup>, which allows kubelet to interact with the Container runtime through the CRI interface to obtain container-related metrics and data, but it is turned off by default <sup id="fnref:kubelet-metric-data" role="doc-noteref"><a href="#fn:kubelet-metric-data" class="footnote" rel="footnote">5</a></sup> and uses cadvisor as the main collection source.</p>
+
+<p><img src="/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" alt="/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" /></p>
+
+<p>Regardless of the collection method used, corresponding data statistics provided by kubelet can be retrieved using the API provided by kubelet itself, as shown below:</p>
+
+<pre><code class="language-bash">$ kubectl get --raw /api/v1/nodes/ip-172-31-21-234.eu-west-1.compute.internal/proxy/stats/summary | jq '.node.runtime.imageFs'
+{
+  "time": "2024-03-11T10:59:56Z",
+  "availableBytes": 17310752768,
+  "capacityBytes": 21462233088,
+  "usedBytes": 1291296768,
+  "inodesFree": 10375082,
+  "inodes": 10484720,
+  "inodesUsed": 44497
+}
+
+</code></pre>
+
+<p>When using containerd as the common container runtime environment (such as Amazon EKS), it defaults to using <code>/var/lib/containerd</code> as the primary location for imageFS:</p>
+
+<pre><code class="language-bash">$ head /etc/containerd/config.toml
+version = 2
+root = "/var/lib/containerd"
+state = "/run/containerd"
+
+</code></pre>
+
+<p>(For more details about the location of imageFS, a recent article on the Kubernetes Blog describes the problem of disk storage exhaustion for different Container runtimes corresponding to imageFS, and suggests separating file system locations <sup id="fnref:k8s-blog-separate-imagefs" role="doc-noteref"><a href="#fn:k8s-blog-separate-imagefs" class="footnote" rel="footnote">6</a></sup>, but we won’t go into details here)</p>
+
+<p>If it’s a CRI, you can try using the CRI command-line tool to understand the imageFS mount location used by Container Runtime:</p>
+
+<pre><code class="language-bash">$ sudo crictl imagefsinfo
+{
+  "status": {
+    "imageFilesystems": [
+      {
+        "timestamp": "1710154476577999227",
+        "fsId": {
+          "mountpoint": "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs"
+        },
+        "usedBytes": {
+          "value": "1291296768"
+        },
+        "inodesUsed": {
+          "value": "44497"
+        }
+      }
+    ],
+    "containerFilesystems": []
+  }
+}
+
+</code></pre>
+
+<p>Therefore, we can infer that kubelet fetches the capacity and available values from imageFS (whether it’s CRI or cadvisor), and from the above settings, we can also deduce that in my environment, the storage location corresponding to imageFS is <code>/var/lib/containerd</code> (containerd). This implies that the space for container images may be shared with the system’s mount location. For instance, the following is the output of my system space, you can try to calculate the obtained value and see if it matches with the value obtained from <code>df</code>:</p>
+
+<pre><code class="language-bash">$ df
+Filesystem     1K-blocks    Used Available Use% Mounted on
+devtmpfs         1962632       0   1962632   0% /dev
+tmpfs            1971680       0   1971680   0% /dev/shm
+tmpfs            1971680    1696   1969984   1% /run
+tmpfs            1971680       0   1971680   0% /sys/fs/cgroup
+/dev/nvme0n1p1  20959212 4054180  16905032  20% /
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6d62590341a08f4066c168f2d00118ac5aade67ceb2797c0d88f97cbe825e302/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6f3f7200edfeb3129b765652da98f14009597d26bfcc7973232984ea431e67a7/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/7c9b3b1b9853dcdccdcc18e99ca89caeac236150df67881dd054651339038efc/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/38935dde2e2d40d73d039befc1283e165284269f7bb11002fd3937c274998fb5/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6fb8c888e2fa36a1ac909909dad4d4f5d520f48eb42731353f176f6e9dd76f03/shm
+tmpfs             394336       0    394336   0% /run/user/1000
+
+</code></pre>
+
+<ul>
+  <li><code>/var/lib/containerd</code> does not separate different file systems, so it shares the corresponding space of <code>/</code></li>
+  <li>The <code>Available</code> value of the root directory position is <code>16905032 KiB</code>, which is the same as the value of <code>imageFs.availableBytes</code> obtained by kubelet (<code>17310752768</code>). Since the unit obtained by kubelet is <code>Byte</code>, it is <code>17310752768 (imageFs.availableBytes) / 1024 = 16905032 KiB</code> (approximately 17 G) after conversion to <code>KiB</code></li>
+  <li>The total space size of the mount point <code>/</code> is <code>1K-block</code> value (<code>20959212 KiB</code>), which is equivalent to the converted <code>21462233088 (imageFs.capacityBytes) / 1024 = 20959212 KiB</code> value (approximately 20 G)</li>
+</ul>
+
+<p>After knowing how kubelet obtains the available space and relevant values of imageFS and according to the implementation of kubelet’s core code, we know that in the above execution environment, whether the space usage exceeds the threshold defined by <code>--image-gc-high-threshold</code> (default is 85%) can be known from the following result:</p>
+
+<pre><code class="language-bash"># usagePercent := 100 - int(available*100/capacity)
+# approximately equals 20%
+usagePercent = 100 - (17310752768 * 100 / 21462233088)
+
+</code></pre>
+
+<p>Since the imageFS in my environment shares space with <code>/</code>, this value is close to the percentage provided by <code>df</code> and can be used as a reference value.</p>
+
+<p>Therefore, in my example, this status is not enough to trigger Garbage Collection and clear some container images. A further step may trigger Pod eviction operations to stop and remove some Pods based on the parameter <code>--eviction-hard</code> (eviction conditions) of Hard Eviction Threshold, such as <code>imagefs.available&lt;15%</code> <sup id="fnref:node-pressure-eviction" role="doc-noteref"><a href="#fn:node-pressure-eviction" class="footnote" rel="footnote">7</a></sup>.</p>
+
+<h3 id="how-to-monitor-imagefs-usage">How to Monitor imageFS Usage</h3>
+
+<p>After understanding the operation mechanism and calculation method of kubelet, we can implement a simple Shell Script to obtain the storage space and usage rate overview of imageFS for each node, for example:</p>
+
+<pre><code class="language-bash">nodes=$(kubectl get no -o=jsonpath='{.items[*].metadata.name}')
+
+for node in $nodes; do
+    imageFS=$(kubectl get --raw "/api/v1/nodes/$node/proxy/stats/summary"  | jq .node.runtime.imageFs)
+    available=$(echo $imageFS | jq '.availableBytes')
+    capacity=$(echo $imageFS | jq '.capacityBytes')
+
+    usagePercent=$((100 - $available * 100 / $capacity))
+
+    echo "Node: $node, Available: $(($available / 1024 / 1024)) MiB, Capacity: $(($capacity / 1024 / 1024)) MiB, Usage: $usagePercent%"
+done
+
+</code></pre>
+
+<p>However, in the general situation where imageFS and the main mounting position are shared, to monitor whether the usage space is tight and further trigger Garbage Collection, in addition to the simple implementation above, it can also be completed through common monitoring, for example, the usage percentage data seen in the above <code>df</code> can be used as a reference. Alternatively, if a common tool like Prometheus Node Exporter has been introduced into the monitoring system that provides related filesystem functions (for example, you can define <code>--collector.filesystem.mount-points-exclude</code> to decide which mount points to exclude from monitoring), it can specifically convert filesystem data into numerical form for further monitoring.</p>
+
+<h2 id="conclusion">Conclusion</h2>
+
+<p>This article deeply explored the Garbage Collection mechanism of Kubernetes and how to monitor the usage of imageFS. After understanding the Garbage Collection of Kubernetes and how to monitor the usage of imageFS, we can have a more comprehensive understanding of the monitoring and resource usage of the Kubernetes environment. Proper resource management can ensure the stability and performance of the system and avoid unexpected service interruptions due to resource exhaustion.</p>
+
+<h2 id="references">References</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:k8s-1-29-image-gc-manager" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/v1.29.0/pkg/kubelet/images/image_gc_manager.go#L319-L360">Kubernetes v1.29.0 - image_gc_manager.go</a> <a href="#fnref:k8s-1-29-image-gc-manager" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-1-29-cri-stats-provider" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/v1.29.0/pkg/kubelet/stats/cri_stats_provider.go#L387-L425">Kubernetes v1.29.0 - cri_stats_provider.go</a> <a href="#fnref:k8s-1-29-cri-stats-provider" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-1-29-cadvisor-stats-provider" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/3f7a50f38688eb332e2a1b013678c6435d539ae6/pkg/kubelet/stats/cadvisor_stats_provider.go#L241-L322">Kubernetes v1.29.0 - cadvisor_stats_provider.go</a> <a href="#fnref:k8s-1-29-cadvisor-stats-provider" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:feature-gate" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features">Kubernetes Feature Gates</a> <a href="#fnref:feature-gate" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubelet-metric-data" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/reference/instrumentation/node-metrics/#:~:text=The%20kubelet%20gathers%20metric%20statistics,via%20the%20Kubernetes%20API%20server">Kubelet Node Metric</a> <a href="#fnref:kubelet-metric-data" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-blog-separate-imagefs" role="doc-endnote">
+      <p><a href="https://kubernetes.io/blog/2024/01/23/kubernetes-separate-image-filesystem/">Image Filesystem: Configuring Kubernetes to store containers on a separate filesystem</a> <a href="#fnref:k8s-blog-separate-imagefs" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:node-pressure-eviction" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/#hard-eviction-thresholds">Node-pressure Eviction Hard eviction thresholds</a> <a href="#fnref:node-pressure-eviction" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2024-03-11">11 Mar 2024</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry/">&laquo; Recover cluster permission with EKS Access Entry</a>
+                </div>
+              
+              
+                <div class="col-md-6 text-right pr-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/how-kubecost-get-all-aws-disks/">How Kubecost Retrieves Unused Disk Information across an Entire AWS Account &raquo;</a>
+                </div>
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#how-kubelet-calculates-container-image-space-and-triggers-garbage-collection">How kubelet Calculates Container Image Space and Triggers Garbage Collection</a></li>
+<li class="toc-entry toc-h2"><a href="#conclusion">Conclusion</a></li>
+<li class="toc-entry toc-h2"><a href="#references">References</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+
+<!-- Begin Default Newsletter Signup Form -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>Sign up to get the update</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail Address" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('Request has been sent!').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('You are in the mailing list!').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/" alt="Home">Home</a>
+    </li>
+    
+    <li>
+      <a href="/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

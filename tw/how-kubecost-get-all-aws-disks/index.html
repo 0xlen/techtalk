@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>深入探討 kubecost 是如何取得整個 AWS 帳號的未使用磁碟資訊 | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/tw/how-kubecost-get-all-aws-disks/" /-->
+
+<meta http-equiv="Content-Language" content="tw">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>深入探討 kubecost 是如何取得整個 AWS 帳號的未使用磁碟資訊 | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="深入探討 kubecost 是如何取得整個 AWS 帳號的未使用磁碟資訊" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="本文將深入研究 kubecost 是如何蒐集整個 AWS 帳號中未使用磁碟的資訊。kubecost 是一個廣受歡迎的工具，用於管理 Kubernetes 環境的成本和資源。本文將解釋 kubecost 如何與 AWS API 進行互動，並使用各種技術和方法來識別和收集未使用的磁碟資源。" />
+<meta property="og:description" content="本文將深入研究 kubecost 是如何蒐集整個 AWS 帳號中未使用磁碟的資訊。kubecost 是一個廣受歡迎的工具，用於管理 Kubernetes 環境的成本和資源。本文將解釋 kubecost 如何與 AWS API 進行互動，並使用各種技術和方法來識別和收集未使用的磁碟資源。" />
+<link rel="canonical" href="https://easontechtalk.com/tw/how-kubecost-get-all-aws-disks/" />
+<meta property="og:url" content="https://easontechtalk.com/tw/how-kubecost-get-all-aws-disks/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2024-04-20T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png" />
+<meta property="twitter:title" content="深入探討 kubecost 是如何取得整個 AWS 帳號的未使用磁碟資訊" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2024-04-20T00:00:00+00:00","datePublished":"2024-04-20T00:00:00+00:00","description":"本文將深入研究 kubecost 是如何蒐集整個 AWS 帳號中未使用磁碟的資訊。kubecost 是一個廣受歡迎的工具，用於管理 Kubernetes 環境的成本和資源。本文將解釋 kubecost 如何與 AWS API 進行互動，並使用各種技術和方法來識別和收集未使用的磁碟資源。","headline":"深入探討 kubecost 是如何取得整個 AWS 帳號的未使用磁碟資訊","image":"https://easontechtalk.com/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/tw/how-kubecost-get-all-aws-disks/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/tw/how-kubecost-get-all-aws-disks/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/tw/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/tw/" alt="首頁">首頁</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/tw/about/" alt="關於">關於</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/?" alt="English">English</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png" alt="深入探討 kubecost 是如何取得整個 AWS 帳號的未使用磁碟資訊">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/tw/categories#amazon-elastic-kubernetes-service-eks">Amazon Elastic Kubernetes Service (EKS)</a>
+                        </li>
+                        
+                        <li>
+                         <a href="/tw/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">深入探討 kubecost 是如何取得整個 AWS 帳號的未使用磁碟資訊</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>本文將深入研究 kubecost 是如何蒐集整個 AWS 帳號中未使用磁碟的資訊。kubecost 是一個廣受歡迎的工具，用於管理 Kubernetes 環境的成本和資源。本文將解釋 kubecost 如何與 AWS API 進行互動，並使用各種技術和方法來識別和收集未使用的磁碟資源。</p>
+
+<h2 id="kubecost-簡介">Kubecost 簡介</h2>
+
+<p>Kubecost 是 Stackwatch 開發的專案，專門用於監控和分析 Kubernetes 的成本。並且提供開源版本（Opencost）以及付費訂閱的版本（Kubecost Enterprise）。其主要用例，在於實現 Kubernetes 叢集的整體成本可見度。Kubecost 的開源版本將計費結果的儲存週期限定為 15 天。如果需要將指標保留 15 天以上，您必須升級至付費版本。</p>
+
+<p>Amazon EKS 免費支援由 AWS 與 Kubecost 協同合作提供自訂版本的 Kubecost（Amazon EKS-optimized Kubecost），透過 Kubecost 可以查看集群的成本分布，並了解哪些應用或服務在消耗最多的資源，可讓監控按 Kubernetes 資源（包括 Pods、節點、命名空間和標籤）進行細部的成本監控和分析，幫助團隊視覺化 Amazon EKS 費用明細、分配成本，以及向應用程式團隊等組織單位收取費用。</p>
+
+<p>此外，Kubecost 還可以提供未使用的磁碟空間資訊，這對於資源管理和成本控制非常有幫助。</p>
+
+<h2 id="kubecost-如何取得未使用磁碟資訊">Kubecost 如何取得未使用磁碟資訊</h2>
+
+<p>不過 kubecost 的未使用磁碟訊息功能設計讓我也收到一個很有趣的問題，有使用者在安裝 Amazon EKS 安裝優化版本的 kubecost 後，安裝後他發現 kubecost 可以獲得整個帳號的未使用磁碟信息。</p>
+
+<p>他懷疑是否預設的權限是否過大了，而且除了依照 EKS 官方的文件安裝 kubecost，他並沒有提供任何帳號等級的權限，因此特別好奇是否存在安全性疑慮，而提出這項問題：</p>
+
+<pre><code class="language-bash">helm upgrade -i kubecost oci://public.ecr.aws/kubecost/cost-analyzer --version kubecost-version \
+    --namespace kubecost --create-namespace \
+    -f https://raw.githubusercontent.com/kubecost/cost-analyzer-helm-chart/develop/cost-analyzer/values-eks-cost-monitoring.yaml
+</code></pre>
+
+<p>要了解 kubecost 其中獲取 AWS 帳號底下所有 EBS 磁碟的機制，就得先分析 kubecost 實際是如何獲取磁碟資訊，並且了解其中是否涉及相關的權限設定。</p>
+
+<p>為了幫助分析，本文將以 kubecost 的基礎開源 opencost 專案的進行分析，以 2.2 版本為例，獲取是否存在閒置 AWS EBS 磁碟的相關分析被定義在 <code>GetOrphanedResources()</code> 方法中 <sup id="fnref:kubecost-getorphanedresource" role="doc-noteref"><a href="#fn:kubecost-getorphanedresource" class="footnote" rel="footnote">1</a></sup>：</p>
+
+<pre><code class="language-go">func (aws *AWS) GetOrphanedResources() ([]models.OrphanedResource, error) {
+	volumes, volumesErr := aws.getAllDisks()
+	addresses, addressesErr := aws.getAllAddresses()
+
+  ...
+
+	for _, volume := range volumes {
+		if aws.isDiskOrphaned(volume) {
+			cost, err := aws.findCostForDisk(volume)
+			if err != nil {
+				return nil, err
+			}
+      ...
+</code></pre>
+
+<p>如果再近一步檢視，可以注意到 <code>getAllDisks()</code> 作為要方法透過迴圈遍歷了所有帳號底下 AWS 區域，並且執行另一個操作為 <code>getDisksForRegion()</code> 獲取單一區域中的 <sup id="fnref:kubecost-getdisk" role="doc-noteref"><a href="#fn:kubecost-getdisk" class="footnote" rel="footnote">2</a></sup>，這裡使用了 EC2 提供的 <code>DescribeVolumes</code> API <sup id="fnref:aws-api-ec2-describe-volumes" role="doc-noteref"><a href="#fn:aws-api-ec2-describe-volumes" class="footnote" rel="footnote">3</a></sup> 操作獲取這些資訊：</p>
+
+<pre><code class="language-go">func (aws *AWS) getDisksForRegion(ctx context.Context, region string, maxResults int32, nextToken *string) (*ec2.DescribeVolumesOutput, error) {
+	aak, err := aws.GetAWSAccessKey()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, err := aak.CreateConfig(region)
+	if err != nil {
+		return nil, err
+	}
+
+	cli := ec2.NewFromConfig(cfg)
+	return cli.DescribeVolumes(ctx, &amp;ec2.DescribeVolumesInput{
+		MaxResults: &amp;maxResults,
+		NextToken:  nextToken,
+	})
+}
+
+func (aws *AWS) getAllDisks() ([]*ec2Types.Volume, error) {
+	regions := aws.Regions()
+	volumeCh := make(chan *ec2.DescribeVolumesOutput, len(regions))
+
+	// Get volumes from each AWS region
+	for _, r := range regions {
+		// Fetch volume response and send results and errors to their
+		// respective channels
+		go func(region string) {
+		   ...
+
+			// Query for first page of volume results
+			resp, err := aws.getDisksForRegion(context.TODO(), region, 1000, nil)
+      ...
+</code></pre>
+
+<p>因此，答案似乎顯而易見，kubecost 在底層實作上仍必須依賴 AWS 提供的 <code>DescribeVolumes</code> 獲取這項訊息，但這個權限是哪裡來的呢？</p>
+
+<p>在 kubecost 的部署中，cost-analyzer 包含了 <code>cost-model</code> 其中一個容器應用，負責前面提到的副程式進行相關 AWS API 的呼叫：</p>
+
+<pre><code class="language-go">NAME                                              READY   STATUS    RESTARTS   AGE
+pod/kubecost-cost-analyzer-688d699b88-w5d8f       0/4     Pending   0          21s
+pod/kubecost-forecasting-6c6456668f-tlhv7         0/1     Pending   0          20s
+pod/kubecost-prometheus-server-6b584dc478-6kd7q   0/1     Pending   0          20s
+
+NAME                                 TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)             AGE
+service/kubecost-aggregator          ClusterIP   10.100.10.104    &lt;none&gt;        9004/TCP            23s
+service/kubecost-cloud-cost          ClusterIP   10.100.193.45    &lt;none&gt;        9005/TCP            23s
+service/kubecost-cost-analyzer       ClusterIP   10.100.26.236    &lt;none&gt;        9003/TCP,9090/TCP   22s
+service/kubecost-forecasting         ClusterIP   10.100.169.241   &lt;none&gt;        5000/TCP            22s
+service/kubecost-prometheus-server   ClusterIP   10.100.185.108   &lt;none&gt;        80/TCP              21s
+
+NAME                                         READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/kubecost-cost-analyzer       0/1     1            0           22s
+deployment.apps/kubecost-forecasting         0/1     1            0           22s
+deployment.apps/kubecost-prometheus-server   0/1     1            0           21s
+
+NAME                                                    DESIRED   CURRENT   READY   AGE
+replicaset.apps/kubecost-cost-analyzer-688d699b88       1         1         0       22s
+replicaset.apps/kubecost-forecasting-6c6456668f         1         1         0       21s
+replicaset.apps/kubecost-prometheus-server-6b584dc478   1         1         0       21s
+</code></pre>
+
+<p>因此，在這種情況下，我們很大概率可以看看是否跟兩個權限設定有關了</p>
+
+<ul>
+  <li>Service Account：是否使用了 EKS 支援的 IAM Role for Service Account（IRSA）功能</li>
+  <li>Worker Node（EC2 instance）本身的 IAM 權限（Instance Profile IAM Role）</li>
+</ul>
+
+<p>在前面的 Helm 安裝步驟中，我們並未設定相關 IRSA 的權限，看了看果然符合預期，並沒有關聯任何的 IAM Role。預設的 Service Account 是用於賦予 kubecost 進行 Kubernetes 資源訪問權限的設定（例如：獲取 Pod, Node, PV, PVC 等等資源的權限），並且在相關的 Helm Chart 中被定義 <sup id="fnref:kubecost-cost-analyzer-cluster-role-template" role="doc-noteref"><a href="#fn:kubecost-cost-analyzer-cluster-role-template" class="footnote" rel="footnote">4</a></sup>：</p>
+
+<pre><code class="language-bash">$ kubectl get pod/kubecost-cost-analyzer-688d699b88-w5d8f -n kubecost -o yaml | grep -i serviceaccount
+  serviceAccount: kubecost-cost-analyzer
+  serviceAccountName: kubecost-cost-analyzer
+
+$ kubectl describe sa/kubecost-cost-analyzer -n kubecost
+Name:                kubecost-cost-analyzer
+Namespace:           kubecost
+Labels:              app=cost-analyzer
+                     app.kubernetes.io/instance=kubecost
+                     app.kubernetes.io/managed-by=Helm
+                     app.kubernetes.io/name=cost-analyzer
+                     helm.sh/chart=cost-analyzer-2.2.0
+Annotations:         meta.helm.sh/release-name: kubecost
+                     meta.helm.sh/release-namespace: kubecost
+Image pull secrets:  &lt;none&gt;
+Mountable secrets:   &lt;none&gt;
+Tokens:              &lt;none&gt;
+Events:              &lt;none&gt;
+</code></pre>
+
+<p>既然不是 IRSA 的設定，這樣我們可以更確定可能跟 EC2 instance 本身關聯的 IAM 權限有關了。預設情況下，每個 EKS 的 Worker Node 都會使用預設的一些 IAM 權限設定（IAM Policy），包含 <sup id="fnref:eks-worker-node-iam-role" role="doc-noteref"><a href="#fn:eks-worker-node-iam-role" class="footnote" rel="footnote">5</a></sup>：</p>
+
+<ul>
+  <li><a href="https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonEKSWorkerNodePolicy.html">AmazonEKSWorkerNodePolicy</a></li>
+  <li><a href="https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonEKS_CNI_Policy.html">AmazonEKS_CNI_Policy</a></li>
+</ul>
+
+<p>這些權限目的是可以讓運行在 EC2 上面的必要 Kubernetes 應用可以正常工作（例如：kubelet 和 CNI Plugin）等。因此，可以預期在運行 kubecost 部署到 Worker Node 上面運行，其通常將使用預設對應 EKS 節點的 IAM 權限，從預設的策略 <code>AmazonEKSWorkerNodePolicy</code> 可以注意到以下資訊：</p>
+
+<pre><code class="language-json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeVolumes",
+                ...
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+</code></pre>
+
+<p>為了驗證是否跟上述權限有關，我在 Worker Node 對應的 IAM Role 中加入拒絕策略進行測試：</p>
+
+<pre><code class="language-json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "TestKubeCostFindAllDisks",
+            "Effect": "Deny",
+            "Action": "ec2:DescribeVolumes",
+            "Resource": "*"
+        }
+    ]
+}
+</code></pre>
+
+<p>當 Kubecost 擷取磁碟資料時，可以看到預期的錯誤：</p>
+
+<pre><code class="language-bash">$ kubectl logs $KUBECOST_POD cost-model -n kubecost
+
+INF unable to get addresses: %s logged 5 times: suppressing future logs
+WRN unable to get disks: operation error EC2: DescribeVolumes, https response error StatusCode: 403, RequestID: b1eb2ada-8813-441c-a2f9-64847e14f6cd, api error UnauthorizedOperation: You are not authorized to perform this operation.
+WRN unable to get disks: operation error EC2: DescribeVolumes, https response error StatusCode: 403, RequestID: 46053624-5c2d-4ef3-a145-f01917eeec84, api error UnauthorizedOperation: You are not authorized to perform this operation.
+</code></pre>
+
+<p>因此我們可以了解 kubecost 是如何是在無需賦予相關權限的情況下獲取所有區域的 EBS 磁碟資源。預設的 <code>ec2:DescribeVolumes</code> 權限確保 kubelet 運行和 EKS-Optimized AMI 中相應組件必須的運作權限，以獲取 EC2 instance 和該區域關聯資源的運作信息（例如：使用 EBS CSI Driver 部署 EBS Volume 的需求），並作為相關 Kubernetes 物件資源 Label 數據的一部分（例如：PersistentVolume 以及 PersistentVolumeClaim），並且只提供讀取權限，未包含相關的寫入操作，這項權限無法修改任何 EBS 資源。</p>
+
+<p>Kubecost 在運作階段透過使用 Worker Node 本身的 IAM 身份和權限掃描 AWS 帳戶區域中閒置的EBS 資源（未附加至任何 EC2 instance 的 EBS 卷），將這些資源篩選出來進行成本節省的優化建議。</p>
+
+<h2 id="總結">總結</h2>
+
+<p>本文深入探討了 Kubecost 如何收集 AWS 帳號中未使用磁碟的資訊，分享了使用者可能在安裝 Kubecost 後對於 Kubecost 可以獲得整個帳號的未使用磁碟訊息的疑慮。除了進行相關的程式碼分析，也解釋了 Kubecost 如何與 AWS API 互動，以及如何使用各種技術和方法來識別和收集未使用的磁碟資源。</p>
+
+<p>經過深入分析和驗證，我們確認 Kubecost 是使用 Worker Node 本身的 IAM 身份和權限來獲取 AWS 帳號中未使用的 EBS 磁碟資訊。這種做法並沒有越權或違反安全原則，因為 Kubecost 僅使用了預設的 <code>ec2:DescribeVolumes</code> 權限，這是為了確保 Kubernetes 運行所必要的權限，並且只有讀取權限，沒有修改任何 EBS 資源的寫入操作。</p>
+
+<p>希望透過本篇文章，能讓讀者對 Kubecost 如何獲取 AWS 未使用磁碟資訊有更深入的理解，並釐清對相關安全性的疑慮。</p>
+
+<h2 id="參考資料">參考資料</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:kubecost-getorphanedresource" role="doc-endnote">
+      <p><a href="https://github.com/opencost/opencost/blob/088f891d8ed6c48d688c31028542ea7ac34331ed/pkg/cloud/aws/provider.go#L1836C1-L1858C1">opencost v2.2 GetOrphanedResources()</a> <a href="#fnref:kubecost-getorphanedresource" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubecost-getdisk" role="doc-endnote">
+      <p><a href="https://github.com/opencost/opencost/blob/088f891d8ed6c48d688c31028542ea7ac34331ed/pkg/cloud/aws/provider.go#L1702-L1834">opencost v2.2 Get Disks</a> <a href="#fnref:kubecost-getdisk" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:aws-api-ec2-describe-volumes" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVolumes.html">AWS API - EC2 DescribeVolumes</a> <a href="#fnref:aws-api-ec2-describe-volumes" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubecost-cost-analyzer-cluster-role-template" role="doc-endnote">
+      <p><a href="https://github.com/kubecost/cost-analyzer-helm-chart/blob/b6d32237dbb80b10dd851dbcc07441171b27a701/cost-analyzer/templates/cost-analyzer-cluster-role-template.yaml">kubecost v2.2 cost-analyzer-cluster-role-template.yaml</a> <a href="#fnref:kubecost-cost-analyzer-cluster-role-template" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-worker-node-iam-role" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/create-node-role.html">Amazon EKS node IAM role</a> <a href="#fnref:eks-worker-node-iam-role" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2024-04-20">20 Apr 2024</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/tw/deep-dive-into-kubernetes-garbage-collector-imagefs/">&laquo; 深入研究 Kubernetes Garbage Collection：容器映像清除機制</a>
+                </div>
+              
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#kubecost-簡介">Kubecost 簡介</a></li>
+<li class="toc-entry toc-h2"><a href="#kubecost-如何取得未使用磁碟資訊">Kubecost 如何取得未使用磁碟資訊</a></li>
+<li class="toc-entry toc-h2"><a href="#總結">總結</a></li>
+<li class="toc-entry toc-h2"><a href="#參考資料">參考資料</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+<!-- Begin Newsletter Signup Form (TW) -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>訂閱並取得更新</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="免費訂閱" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('請求已送出！').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('你已經加入至訂閱清單！').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('訂閱失敗，請檢查是否符合格式並重試。').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('訂閱失敗，請檢查是否符合格式並重試。').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/tw/" alt="回首頁">回首頁</a>
+    </li>
+    
+    <li>
+      <a href="/tw/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

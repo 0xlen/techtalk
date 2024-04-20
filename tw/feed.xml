@@ -1,0 +1,1916 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en_us"><generator uri="https://jekyllrb.com/" version="4.3.3">Jekyll</generator><link href="https://easontechtalk.com/tw/feed.xml" rel="self" type="application/atom+xml" /><link href="https://easontechtalk.com/tw/" rel="alternate" type="text/html" hreflang="en_us" /><updated>2024-04-20T16:03:10+00:00</updated><id>https://easontechtalk.com/feed.xml</id><title type="html">Eason Tech Talk</title><author><name>Eason</name></author><entry xml:lang="tw"><title type="html">深入探討 kubecost 是如何取得整個 AWS 帳號的未使用磁碟資訊</title><link href="https://easontechtalk.com/tw/how-kubecost-get-all-aws-disks/" rel="alternate" type="text/html" title="深入探討 kubecost 是如何取得整個 AWS 帳號的未使用磁碟資訊" /><published>2024-04-20T00:00:00+00:00</published><updated>2024-04-20T00:00:00+00:00</updated><id>https://easontechtalk.com/how-kubecost-get-all-aws-disks</id><content type="html" xml:base="https://easontechtalk.com/how-kubecost-get-all-aws-disks/"><![CDATA[<p>本文將深入研究 kubecost 是如何蒐集整個 AWS 帳號中未使用磁碟的資訊。kubecost 是一個廣受歡迎的工具，用於管理 Kubernetes 環境的成本和資源。本文將解釋 kubecost 如何與 AWS API 進行互動，並使用各種技術和方法來識別和收集未使用的磁碟資源。</p>
+
+<h2 id="kubecost-簡介">Kubecost 簡介</h2>
+
+<p>Kubecost 是 Stackwatch 開發的專案，專門用於監控和分析 Kubernetes 的成本。並且提供開源版本（Opencost）以及付費訂閱的版本（Kubecost Enterprise）。其主要用例，在於實現 Kubernetes 叢集的整體成本可見度。Kubecost 的開源版本將計費結果的儲存週期限定為 15 天。如果需要將指標保留 15 天以上，您必須升級至付費版本。</p>
+
+<p>Amazon EKS 免費支援由 AWS 與 Kubecost 協同合作提供自訂版本的 Kubecost（Amazon EKS-optimized Kubecost），透過 Kubecost 可以查看集群的成本分布，並了解哪些應用或服務在消耗最多的資源，可讓監控按 Kubernetes 資源（包括 Pods、節點、命名空間和標籤）進行細部的成本監控和分析，幫助團隊視覺化 Amazon EKS 費用明細、分配成本，以及向應用程式團隊等組織單位收取費用。</p>
+
+<p>此外，Kubecost 還可以提供未使用的磁碟空間資訊，這對於資源管理和成本控制非常有幫助。</p>
+
+<h2 id="kubecost-如何取得未使用磁碟資訊">Kubecost 如何取得未使用磁碟資訊</h2>
+
+<p>不過 kubecost 的未使用磁碟訊息功能設計讓我也收到一個很有趣的問題，有使用者在安裝 Amazon EKS 安裝優化版本的 kubecost 後，安裝後他發現 kubecost 可以獲得整個帳號的未使用磁碟信息。</p>
+
+<p>他懷疑是否預設的權限是否過大了，而且除了依照 EKS 官方的文件安裝 kubecost，他並沒有提供任何帳號等級的權限，因此特別好奇是否存在安全性疑慮，而提出這項問題：</p>
+
+<pre><code class="language-bash">helm upgrade -i kubecost oci://public.ecr.aws/kubecost/cost-analyzer --version kubecost-version \
+    --namespace kubecost --create-namespace \
+    -f https://raw.githubusercontent.com/kubecost/cost-analyzer-helm-chart/develop/cost-analyzer/values-eks-cost-monitoring.yaml
+</code></pre>
+
+<p>要了解 kubecost 其中獲取 AWS 帳號底下所有 EBS 磁碟的機制，就得先分析 kubecost 實際是如何獲取磁碟資訊，並且了解其中是否涉及相關的權限設定。</p>
+
+<p>為了幫助分析，本文將以 kubecost 的基礎開源 opencost 專案的進行分析，以 2.2 版本為例，獲取是否存在閒置 AWS EBS 磁碟的相關分析被定義在 <code>GetOrphanedResources()</code> 方法中 <sup id="fnref:kubecost-getorphanedresource" role="doc-noteref"><a href="#fn:kubecost-getorphanedresource" class="footnote" rel="footnote">1</a></sup>：</p>
+
+<pre><code class="language-go">func (aws *AWS) GetOrphanedResources() ([]models.OrphanedResource, error) {
+	volumes, volumesErr := aws.getAllDisks()
+	addresses, addressesErr := aws.getAllAddresses()
+
+  ...
+
+	for _, volume := range volumes {
+		if aws.isDiskOrphaned(volume) {
+			cost, err := aws.findCostForDisk(volume)
+			if err != nil {
+				return nil, err
+			}
+      ...
+</code></pre>
+
+<p>如果再近一步檢視，可以注意到 <code>getAllDisks()</code> 作為要方法透過迴圈遍歷了所有帳號底下 AWS 區域，並且執行另一個操作為 <code>getDisksForRegion()</code> 獲取單一區域中的 <sup id="fnref:kubecost-getdisk" role="doc-noteref"><a href="#fn:kubecost-getdisk" class="footnote" rel="footnote">2</a></sup>，這裡使用了 EC2 提供的 <code>DescribeVolumes</code> API <sup id="fnref:aws-api-ec2-describe-volumes" role="doc-noteref"><a href="#fn:aws-api-ec2-describe-volumes" class="footnote" rel="footnote">3</a></sup> 操作獲取這些資訊：</p>
+
+<pre><code class="language-go">func (aws *AWS) getDisksForRegion(ctx context.Context, region string, maxResults int32, nextToken *string) (*ec2.DescribeVolumesOutput, error) {
+	aak, err := aws.GetAWSAccessKey()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, err := aak.CreateConfig(region)
+	if err != nil {
+		return nil, err
+	}
+
+	cli := ec2.NewFromConfig(cfg)
+	return cli.DescribeVolumes(ctx, &amp;ec2.DescribeVolumesInput{
+		MaxResults: &amp;maxResults,
+		NextToken:  nextToken,
+	})
+}
+
+func (aws *AWS) getAllDisks() ([]*ec2Types.Volume, error) {
+	regions := aws.Regions()
+	volumeCh := make(chan *ec2.DescribeVolumesOutput, len(regions))
+
+	// Get volumes from each AWS region
+	for _, r := range regions {
+		// Fetch volume response and send results and errors to their
+		// respective channels
+		go func(region string) {
+		   ...
+
+			// Query for first page of volume results
+			resp, err := aws.getDisksForRegion(context.TODO(), region, 1000, nil)
+      ...
+</code></pre>
+
+<p>因此，答案似乎顯而易見，kubecost 在底層實作上仍必須依賴 AWS 提供的 <code>DescribeVolumes</code> 獲取這項訊息，但這個權限是哪裡來的呢？</p>
+
+<p>在 kubecost 的部署中，cost-analyzer 包含了 <code>cost-model</code> 其中一個容器應用，負責前面提到的副程式進行相關 AWS API 的呼叫：</p>
+
+<pre><code class="language-go">NAME                                              READY   STATUS    RESTARTS   AGE
+pod/kubecost-cost-analyzer-688d699b88-w5d8f       0/4     Pending   0          21s
+pod/kubecost-forecasting-6c6456668f-tlhv7         0/1     Pending   0          20s
+pod/kubecost-prometheus-server-6b584dc478-6kd7q   0/1     Pending   0          20s
+
+NAME                                 TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)             AGE
+service/kubecost-aggregator          ClusterIP   10.100.10.104    &lt;none&gt;        9004/TCP            23s
+service/kubecost-cloud-cost          ClusterIP   10.100.193.45    &lt;none&gt;        9005/TCP            23s
+service/kubecost-cost-analyzer       ClusterIP   10.100.26.236    &lt;none&gt;        9003/TCP,9090/TCP   22s
+service/kubecost-forecasting         ClusterIP   10.100.169.241   &lt;none&gt;        5000/TCP            22s
+service/kubecost-prometheus-server   ClusterIP   10.100.185.108   &lt;none&gt;        80/TCP              21s
+
+NAME                                         READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/kubecost-cost-analyzer       0/1     1            0           22s
+deployment.apps/kubecost-forecasting         0/1     1            0           22s
+deployment.apps/kubecost-prometheus-server   0/1     1            0           21s
+
+NAME                                                    DESIRED   CURRENT   READY   AGE
+replicaset.apps/kubecost-cost-analyzer-688d699b88       1         1         0       22s
+replicaset.apps/kubecost-forecasting-6c6456668f         1         1         0       21s
+replicaset.apps/kubecost-prometheus-server-6b584dc478   1         1         0       21s
+</code></pre>
+
+<p>因此，在這種情況下，我們很大概率可以看看是否跟兩個權限設定有關了</p>
+
+<ul>
+  <li>Service Account：是否使用了 EKS 支援的 IAM Role for Service Account（IRSA）功能</li>
+  <li>Worker Node（EC2 instance）本身的 IAM 權限（Instance Profile IAM Role）</li>
+</ul>
+
+<p>在前面的 Helm 安裝步驟中，我們並未設定相關 IRSA 的權限，看了看果然符合預期，並沒有關聯任何的 IAM Role。預設的 Service Account 是用於賦予 kubecost 進行 Kubernetes 資源訪問權限的設定（例如：獲取 Pod, Node, PV, PVC 等等資源的權限），並且在相關的 Helm Chart 中被定義 <sup id="fnref:kubecost-cost-analyzer-cluster-role-template" role="doc-noteref"><a href="#fn:kubecost-cost-analyzer-cluster-role-template" class="footnote" rel="footnote">4</a></sup>：</p>
+
+<pre><code class="language-bash">$ kubectl get pod/kubecost-cost-analyzer-688d699b88-w5d8f -n kubecost -o yaml | grep -i serviceaccount
+  serviceAccount: kubecost-cost-analyzer
+  serviceAccountName: kubecost-cost-analyzer
+
+$ kubectl describe sa/kubecost-cost-analyzer -n kubecost
+Name:                kubecost-cost-analyzer
+Namespace:           kubecost
+Labels:              app=cost-analyzer
+                     app.kubernetes.io/instance=kubecost
+                     app.kubernetes.io/managed-by=Helm
+                     app.kubernetes.io/name=cost-analyzer
+                     helm.sh/chart=cost-analyzer-2.2.0
+Annotations:         meta.helm.sh/release-name: kubecost
+                     meta.helm.sh/release-namespace: kubecost
+Image pull secrets:  &lt;none&gt;
+Mountable secrets:   &lt;none&gt;
+Tokens:              &lt;none&gt;
+Events:              &lt;none&gt;
+</code></pre>
+
+<p>既然不是 IRSA 的設定，這樣我們可以更確定可能跟 EC2 instance 本身關聯的 IAM 權限有關了。預設情況下，每個 EKS 的 Worker Node 都會使用預設的一些 IAM 權限設定（IAM Policy），包含 <sup id="fnref:eks-worker-node-iam-role" role="doc-noteref"><a href="#fn:eks-worker-node-iam-role" class="footnote" rel="footnote">5</a></sup>：</p>
+
+<ul>
+  <li><a href="https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonEKSWorkerNodePolicy.html">AmazonEKSWorkerNodePolicy</a></li>
+  <li><a href="https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonEKS_CNI_Policy.html">AmazonEKS_CNI_Policy</a></li>
+</ul>
+
+<p>這些權限目的是可以讓運行在 EC2 上面的必要 Kubernetes 應用可以正常工作（例如：kubelet 和 CNI Plugin）等。因此，可以預期在運行 kubecost 部署到 Worker Node 上面運行，其通常將使用預設對應 EKS 節點的 IAM 權限，從預設的策略 <code>AmazonEKSWorkerNodePolicy</code> 可以注意到以下資訊：</p>
+
+<pre><code class="language-json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeVolumes",
+                ...
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+</code></pre>
+
+<p>為了驗證是否跟上述權限有關，我在 Worker Node 對應的 IAM Role 中加入拒絕策略進行測試：</p>
+
+<pre><code class="language-json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "TestKubeCostFindAllDisks",
+            "Effect": "Deny",
+            "Action": "ec2:DescribeVolumes",
+            "Resource": "*"
+        }
+    ]
+}
+</code></pre>
+
+<p>當 Kubecost 擷取磁碟資料時，可以看到預期的錯誤：</p>
+
+<pre><code class="language-bash">$ kubectl logs $KUBECOST_POD cost-model -n kubecost
+
+INF unable to get addresses: %s logged 5 times: suppressing future logs
+WRN unable to get disks: operation error EC2: DescribeVolumes, https response error StatusCode: 403, RequestID: b1eb2ada-8813-441c-a2f9-64847e14f6cd, api error UnauthorizedOperation: You are not authorized to perform this operation.
+WRN unable to get disks: operation error EC2: DescribeVolumes, https response error StatusCode: 403, RequestID: 46053624-5c2d-4ef3-a145-f01917eeec84, api error UnauthorizedOperation: You are not authorized to perform this operation.
+</code></pre>
+
+<p>因此我們可以了解 kubecost 是如何是在無需賦予相關權限的情況下獲取所有區域的 EBS 磁碟資源。預設的 <code>ec2:DescribeVolumes</code> 權限確保 kubelet 運行和 EKS-Optimized AMI 中相應組件必須的運作權限，以獲取 EC2 instance 和該區域關聯資源的運作信息（例如：使用 EBS CSI Driver 部署 EBS Volume 的需求），並作為相關 Kubernetes 物件資源 Label 數據的一部分（例如：PersistentVolume 以及 PersistentVolumeClaim），並且只提供讀取權限，未包含相關的寫入操作，這項權限無法修改任何 EBS 資源。</p>
+
+<p>Kubecost 在運作階段透過使用 Worker Node 本身的 IAM 身份和權限掃描 AWS 帳戶區域中閒置的EBS 資源（未附加至任何 EC2 instance 的 EBS 卷），將這些資源篩選出來進行成本節省的優化建議。</p>
+
+<h2 id="總結">總結</h2>
+
+<p>本文深入探討了 Kubecost 如何收集 AWS 帳號中未使用磁碟的資訊，分享了使用者可能在安裝 Kubecost 後對於 Kubecost 可以獲得整個帳號的未使用磁碟訊息的疑慮。除了進行相關的程式碼分析，也解釋了 Kubecost 如何與 AWS API 互動，以及如何使用各種技術和方法來識別和收集未使用的磁碟資源。</p>
+
+<p>經過深入分析和驗證，我們確認 Kubecost 是使用 Worker Node 本身的 IAM 身份和權限來獲取 AWS 帳號中未使用的 EBS 磁碟資訊。這種做法並沒有越權或違反安全原則，因為 Kubecost 僅使用了預設的 <code>ec2:DescribeVolumes</code> 權限，這是為了確保 Kubernetes 運行所必要的權限，並且只有讀取權限，沒有修改任何 EBS 資源的寫入操作。</p>
+
+<p>希望透過本篇文章，能讓讀者對 Kubecost 如何獲取 AWS 未使用磁碟資訊有更深入的理解，並釐清對相關安全性的疑慮。</p>
+
+<h2 id="參考資料">參考資料</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:kubecost-getorphanedresource" role="doc-endnote">
+      <p><a href="https://github.com/opencost/opencost/blob/088f891d8ed6c48d688c31028542ea7ac34331ed/pkg/cloud/aws/provider.go#L1836C1-L1858C1">opencost v2.2 GetOrphanedResources()</a> <a href="#fnref:kubecost-getorphanedresource" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubecost-getdisk" role="doc-endnote">
+      <p><a href="https://github.com/opencost/opencost/blob/088f891d8ed6c48d688c31028542ea7ac34331ed/pkg/cloud/aws/provider.go#L1702-L1834">opencost v2.2 Get Disks</a> <a href="#fnref:kubecost-getdisk" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:aws-api-ec2-describe-volumes" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVolumes.html">AWS API - EC2 DescribeVolumes</a> <a href="#fnref:aws-api-ec2-describe-volumes" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubecost-cost-analyzer-cluster-role-template" role="doc-endnote">
+      <p><a href="https://github.com/kubecost/cost-analyzer-helm-chart/blob/b6d32237dbb80b10dd851dbcc07441171b27a701/cost-analyzer/templates/cost-analyzer-cluster-role-template.yaml">kubecost v2.2 cost-analyzer-cluster-role-template.yaml</a> <a href="#fnref:kubecost-cost-analyzer-cluster-role-template" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-worker-node-iam-role" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/create-node-role.html">Amazon EKS node IAM role</a> <a href="#fnref:eks-worker-node-iam-role" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Kubernetes Service (EKS)" /><category term="Kubernetes" /><summary type="html"><![CDATA[本文將深入研究 kubecost 是如何蒐集整個 AWS 帳號中未使用磁碟的資訊。kubecost 是一個廣受歡迎的工具，用於管理 Kubernetes 環境的成本和資源。本文將解釋 kubecost 如何與 AWS API 進行互動，並使用各種技術和方法來識別和收集未使用的磁碟資源。]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="tw"><title type="html">深入研究 Kubernetes Garbage Collection：容器映像清除機制</title><link href="https://easontechtalk.com/tw/deep-dive-into-kubernetes-garbage-collector-imagefs/" rel="alternate" type="text/html" title="深入研究 Kubernetes Garbage Collection：容器映像清除機制" /><published>2024-03-11T00:00:00+00:00</published><updated>2024-03-11T00:00:00+00:00</updated><id>https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs</id><content type="html" xml:base="https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs/"><![CDATA[<p>kubelet 如何觸發垃圾收集機制 (Garbage Collection)？在本文中，我們將深入探討 Kubernetes Garbage Collection，並且理解 kubelet 如何實現映像清除機制。此外，我們也將探討如何正確地監控 imageFS 的使用情況。</p>
+
+<p>當 kubelet 檢測到 imageFs（存儲容器映像的檔案系統）的可用空間低於預定閾值時，它會觸發 Garbage Collection，即開始清理不再需要的容器映像以釋放空間。這一閾值可以通過 kubelet 的配置選項 <code>--image-gc-high-threshold</code> (<code>imageGCHighThresholdPercent</code>) 設定，預設值為 85%，這意味著當 imageFs 的可用空間低於總空間的 85% 時，kubelet 將開始進行映像清理工作，並且可能在日誌中注意到類似以下的提示：</p>
+
+<pre><code class="language-bash">kubelet[2298]: I0226 11:59:17.153440    2298 image_gc_manager.go:310] "Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold" usage=93 highThreshold=85 amountToFree=69382155468 lowThreshold=80
+
+kubelet[2298]: I0226 12:04:17.157231    2298 image_gc_manager.go:310] "Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold" usage=97 highThreshold=85 amountToFree=88325110988 lowThreshold=80
+</code></pre>
+
+<h2 id="kubelet-如何計算容器映像空間並且觸發-garbage-collection">kubelet 如何計算容器映像空間並且觸發 Garbage Collection</h2>
+
+<p>要了解 kubelet 其中對於容器映像管理的 Garbage Collection 的機制，就得先分析 kubelet 實際是如何分析磁碟空間，並且根據對應設定參數設定觸發清除工作。</p>
+
+<p>以 Kubernetes 1.29 核心程式碼為例 <sup id="fnref:k8s-1-29-image-gc-manager" role="doc-noteref"><a href="#fn:k8s-1-29-image-gc-manager" class="footnote" rel="footnote">1</a></sup>。在該片段中，定義了 <code>usagePercent</code> 計算方法，並且提供了一個判斷式檢查是否超過 <code>im.policy.HighThresholdPercent</code> 的數值。從這個片段中，可以推敲這裡的邏輯與上述的參數設定觸發映像清理行為相關：</p>
+
+<pre><code class="language-go">  // Get disk usage on disk holding images.
+  fsStats, _, err := im.statsProvider.ImageFsStats(ctx)
+  if err != nil {
+    return err
+  }
+
+	var capacity, available int64
+	if fsStats.CapacityBytes != nil {
+		capacity = int64(*fsStats.CapacityBytes)
+	}
+	if fsStats.AvailableBytes != nil {
+		available = int64(*fsStats.AvailableBytes)
+	}
+
+  ...
+
+  // If over the max threshold, free enough to place us at the lower threshold.
+  usagePercent := 100 - int(available*100/capacity)
+  if usagePercent &gt;= im.policy.HighThresholdPercent {
+    amountToFree := capacity*int64(100-im.policy.LowThresholdPercent)/100 - available
+    klog.InfoS("Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold", "usage", usagePercent, "highThreshold", im.policy.HighThresholdPercent, "amountToFree", amountToFree, "lowThreshold", im.policy.LowThresholdPercent)
+    freed, err := im.freeSpace(ctx, amountToFree, freeTime, images)
+    if err != nil {
+      return err
+    }
+
+    if freed &lt; amountToFree {
+      err := fmt.Errorf("Failed to garbage collect required amount of images. Attempted to free %d bytes, but only found %d bytes eligible to free.", amountToFree, freed)
+      im.recorder.Eventf(im.nodeRef, v1.EventTypeWarning, events.FreeDiskSpaceFailed, err.Error())
+      return err
+    }
+  }
+</code></pre>
+
+<p>值得一提的是，變數 <code>capacity</code> 以及 <code>available</code> 從字面上來看分別代表了總以及剩餘可用空間，實作上實際引用了 <code>statsProvider.ImageFsStats</code> 其中的 <code>CapacityBytes</code> 以及 <code>AvailableBytes</code> 數值。</p>
+
+<p>如果進一步分析核心程式碼，可以發現 <code>statsProvider</code> 可以根據實作上的定義存在獲取映像對應的儲存空間數據有些微不同 (Image Filesystem，以下簡稱 imageFS)。ImageFS 在 kubelet 核心程式碼中存在兩者不同的實作方式，一種為使用 CRI 獲取，另一種則為使用 cadvisor，因此，在核心程式碼目錄中可以注意到存在 <code>cri_stats_provider.go</code> <sup id="fnref:k8s-1-29-cri-stats-provider" role="doc-noteref"><a href="#fn:k8s-1-29-cri-stats-provider" class="footnote" rel="footnote">2</a></sup> 以及 <code>cadvisor_stats_provider.go</code> <sup id="fnref:k8s-1-29-cadvisor-stats-provider" role="doc-noteref"><a href="#fn:k8s-1-29-cadvisor-stats-provider" class="footnote" rel="footnote">3</a></sup> 兩者不同的實作。</p>
+
+<p>這項機制在 Kubernetes 1.23 版本支持了這項 <code>PodAndContainerStatsFromCRI</code> 測試功能 (Feature Gate <sup id="fnref:feature-gate" role="doc-noteref"><a href="#fn:feature-gate" class="footnote" rel="footnote">4</a></sup>)，允許 kubelet 透過 CRI 介面與 Container runtime 互動獲取容器相關的指標和數據，但預設都是關閉 <sup id="fnref:kubelet-metric-data" role="doc-noteref"><a href="#fn:kubelet-metric-data" class="footnote" rel="footnote">5</a></sup>，並且使用 cadvisor 作為主要的收集來源。</p>
+
+<p><img src="/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" alt="" /></p>
+
+<p>但不論使用哪種方式收集，根據 kubelet 提供的對應數據統計，其統計結果皆可以使用 kubelet 本身提供的 API 獲得這項資訊，例如：</p>
+
+<pre><code class="language-bash">$ kubectl get --raw /api/v1/nodes/ip-172-31-21-234.eu-west-1.compute.internal/proxy/stats/summary | jq '.node.runtime.imageFs'
+{
+  "time": "2024-03-11T10:59:56Z",
+  "availableBytes": 17310752768,
+  "capacityBytes": 21462233088,
+  "usedBytes": 1291296768,
+  "inodesFree": 10375082,
+  "inodes": 10484720,
+  "inodesUsed": 44497
+}
+</code></pre>
+
+<p>在使用 containerd 作為容器執行的通用環境下 (例如：Amazon EKS)，其預設將使用 <code>/var/lib/containerd</code> 作為主要的 imageFS 位置：</p>
+
+<pre><code class="language-bash">$ head /etc/containerd/config.toml
+version = 2
+root = "/var/lib/containerd"
+state = "/run/containerd"
+</code></pre>
+
+<p>(如果想瞭解更多有關 imageFS 的位置，Kubernetes Blog 近期有一篇文章在描述不同 Container runtime 對應的 imageFS 磁碟儲存空間耗盡問題，並且建議分離檔案系統位置 <sup id="fnref:k8s-blog-separate-imagefs" role="doc-noteref"><a href="#fn:k8s-blog-separate-imagefs" class="footnote" rel="footnote">6</a></sup>，在此不贅述)</p>
+
+<p>如果是 CRI，可以嘗試使用 CRI 命令列工具了解 Container Runtime 所使用的 imageFS 掛載位置：</p>
+
+<pre><code class="language-bash">$ sudo crictl imagefsinfo
+{
+  "status": {
+    "imageFilesystems": [
+      {
+        "timestamp": "1710154476577999227",
+        "fsId": {
+          "mountpoint": "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs"
+        },
+        "usedBytes": {
+          "value": "1291296768"
+        },
+        "inodesUsed": {
+          "value": "44497"
+        }
+      }
+    ],
+    "containerFilesystems": []
+  }
+}
+</code></pre>
+
+<p>因此，我們可以得知 kubelet 會擷取 imageFS 中的 capacity, available 等數值 (不論是 CRI 或是 cadvisor)，上述設定中也可以得知我環境中 imageFS 對應的儲存位置為 <code>/var/lib/containerd</code> (containerd)。這部分意味著容器映像的空間將可能與系統的掛載位置共用，例如，以下是我的系統空間輸出，可以根據以下資料嘗試計算取得的數值與 <code>df</code> 得到的數值是否匹配：</p>
+
+<pre><code class="language-bash">$ df
+Filesystem     1K-blocks    Used Available Use% Mounted on
+devtmpfs         1962632       0   1962632   0% /dev
+tmpfs            1971680       0   1971680   0% /dev/shm
+tmpfs            1971680    1696   1969984   1% /run
+tmpfs            1971680       0   1971680   0% /sys/fs/cgroup
+/dev/nvme0n1p1  20959212 4054180  16905032  20% /
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6d62590341a08f4066c168f2d00118ac5aade67ceb2797c0d88f97cbe825e302/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6f3f7200edfeb3129b765652da98f14009597d26bfcc7973232984ea431e67a7/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/7c9b3b1b9853dcdccdcc18e99ca89caeac236150df67881dd054651339038efc/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/38935dde2e2d40d73d039befc1283e165284269f7bb11002fd3937c274998fb5/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6fb8c888e2fa36a1ac909909dad4d4f5d520f48eb42731353f176f6e9dd76f03/shm
+tmpfs             394336       0    394336   0% /run/user/1000
+</code></pre>
+
+<ul>
+  <li><code>/var/lib/containerd</code> 並未分離不同的檔案系統因此共享 <code>/</code> 的對應空間</li>
+  <li>根目錄位置的 <code>Available</code> 數值爲 <code>16905032 KiB</code>，該數值與上述 kubelet 獲取的 <code>imageFs.availableBytes</code>的數值相同 (<code>17310752768</code>)。由於 kubelet 獲取的單位是 <code>Byte</code>，轉換為 <code>KiB</code> 後為 <code>17310752768 (imageFs.availableBytes) / 1024 = 16905032 KiB</code> (約 17 G)</li>
+  <li>掛載點 <code>/</code> 的總空間大小為 <code>1K-block</code>數值 (<code>20959212 KiB</code>)，等同於轉換後的 <code>21462233088 (imageFs.capacityBytes) / 1024 = 20959212 KiB</code> 數值 (約 20 G)</li>
+</ul>
+
+<p>在知道 kubelet 是如何獲取 imageFS 可用空間和相關數值後，根據 kubelet 核心程式碼的實作，我們可以知道在上述執行環境中，計算使用空間是否超出 <code>--image-gc-high-threshold</code> 定義的閥值 (預設為 85%) 則可以根據以下結果得知：</p>
+
+<pre><code class="language-bash"># usagePercent := 100 - int(available*100/capacity)
+# 約等於 20%
+usagePercent = 100 - (17310752768 * 100 / 21462233088)
+</code></pre>
+
+<p>由於我的環境中 imageFS 與 <code>/</code> 空間共享，因此該數值與 <code>df</code> 提供的百分比近似而可以作為參考值。</p>
+
+<p>因此，在我的例子中這樣的狀態並不足以觸發  Garbage Collection 並且清除部分的容器映像。更一步則可能根據 Hard Eviction Threshold 的參數 <code>--eviction-hard</code> (驅逐條件) 觸發 Pod 驅逐操作將部分的 Pod 停止並且移除，例如 <code>imagefs.available&lt;15%</code> <sup id="fnref:node-pressure-eviction" role="doc-noteref"><a href="#fn:node-pressure-eviction" class="footnote" rel="footnote">7</a></sup>。</p>
+
+<h3 id="如何監控-imagefs-的用量">如何監控 imageFS 的用量</h3>
+
+<p>在了解 kubelet 的運作機制和計算方法後，我們可以透過實作一個簡單的 Shell Script 來獲取每個節點的 imageFS 儲存空間和使用率概況，例如：</p>
+
+<pre><code class="language-bash">nodes=$(kubectl get no -o=jsonpath='{.items[*].metadata.name}')
+
+for node in $nodes; do
+    imageFS=$(kubectl get --raw "/api/v1/nodes/$node/proxy/stats/summary"  | jq .node.runtime.imageFs)
+    available=$(echo $imageFS | jq '.availableBytes')
+    capacity=$(echo $imageFS | jq '.capacityBytes')
+
+    usagePercent=$((100 - $available * 100 / $capacity))
+
+    echo "Node: $node, Available: $(($available / 1024 / 1024)) MiB, Capacity: $(($capacity / 1024 / 1024)) MiB, Usage: $usagePercent%"
+done
+</code></pre>
+
+<p>然而，在 imageFS 與主要掛載位置共用的通用情況下，要監控使用空間是否緊張而進一步觸發 Garbage Collection，除了上述簡單的實作，也可以透過常見的監控完成，例如上述的 <code>df</code> 所見的使用量百分比數據即可作為一項參考，亦或者是監控系統中有引入常見的 Prometheus Node Exporter 的提供了檔案系統相關的功能 (例如可以定義 <code>--collector.filesystem.mount-points-exclude</code> 決定哪些掛載點要排除監控) 能夠具體將檔案系統的數據進一步轉數值化，以進行近一步的監控。</p>
+
+<h2 id="總結">總結</h2>
+
+<p>本文深入探討了 Kubernetes 的垃圾收集機制 (Garbage Collection) 以及如何監控 imageFS 的使用情況。在了解 Kubernetes 的 Garbage Collection 以及如何監控 imageFS 的使用情況後，可以對於 Kubernetes 環境的監控和資源使用有更全面的認識。妥善的資源管理能確保系統的穩定與效能，避免因為資源耗盡而導致的非預期服務中斷。</p>
+
+<h2 id="參考資料">參考資料</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:k8s-1-29-image-gc-manager" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/v1.29.0/pkg/kubelet/images/image_gc_manager.go#L319-L360">Kubernetes v1.29.0 - image_gc_manager.go</a> <a href="#fnref:k8s-1-29-image-gc-manager" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-1-29-cri-stats-provider" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/v1.29.0/pkg/kubelet/stats/cri_stats_provider.go#L387-L425">Kubernetes v1.29.0 - cri_stats_provider.go</a> <a href="#fnref:k8s-1-29-cri-stats-provider" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-1-29-cadvisor-stats-provider" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/3f7a50f38688eb332e2a1b013678c6435d539ae6/pkg/kubelet/stats/cadvisor_stats_provider.go#L241-L322">Kubernetes v1.29.0 - cadvisor_stats_provider.go</a> <a href="#fnref:k8s-1-29-cadvisor-stats-provider" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:feature-gate" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features">Kubernetes Feature Gates</a> <a href="#fnref:feature-gate" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubelet-metric-data" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/reference/instrumentation/node-metrics/#:~:text=The%20kubelet%20gathers%20metric%20statistics,via%20the%20Kubernetes%20API%20server">Kubelet Node Metric</a> <a href="#fnref:kubelet-metric-data" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-blog-separate-imagefs" role="doc-endnote">
+      <p><a href="https://kubernetes.io/blog/2024/01/23/kubernetes-separate-image-filesystem/">Image Filesystem: Configuring Kubernetes to store containers on a separate filesystem</a> <a href="#fnref:k8s-blog-separate-imagefs" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:node-pressure-eviction" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/#hard-eviction-thresholds">Node-pressure Eviction Hard eviction thresholds</a> <a href="#fnref:node-pressure-eviction" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Kubernetes" /><summary type="html"><![CDATA[kubelet 如何觸發垃圾收集機制 (Garbage Collection)？在本文中，我們將深入探討 Kubernetes Garbage Collection，並且理解 kubelet 如何實現映像清除機制。此外，我們也將探討如何正確地監控 imageFS 的使用情況。]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="tw"><title type="html">使用 EKS Access Entry 拯救並恢復叢集的存取權限</title><link href="https://easontechtalk.com/tw/recover-permission-using-eks-cluster-access-entry/" rel="alternate" type="text/html" title="使用 EKS Access Entry 拯救並恢復叢集的存取權限" /><published>2024-02-25T00:00:00+00:00</published><updated>2024-02-25T00:00:00+00:00</updated><id>https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry</id><content type="html" xml:base="https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry/"><![CDATA[<p>在過去，管理 Amazon Elastic Kubernetes Service (EKS) 叢集的存取權限通常需要依賴 AWS IAM Authenticator 和 aws-auth ConfigMap 的組合。然而，這樣的管理方式可能遇到格式錯誤、自動化更新困難以及 IAM 用戶被刪除等限制和問題。</p>
+
+<p>為了解決這些問題，EKS 釋出了一項新的驗證方式 — <strong>EKS Access Entry</strong>，提供了一個新的優化的解決方案。通過 EKS Access Entry，簡化了 aws-auth ConfigMap 的管理配置，甚至在某些場景下恢復 EKS 叢集的存取權限。</p>
+
+<h2 id="為什麼這個功能這麼重要">為什麼這個功能這麼重要</h2>
+
+<p>在過去，Amazon EKS 整合了 IAM 作為主要的身份認證，然而，其中的身份認證仍依賴運行在 EKS 中的 AWS IAM Authenticator 進行驗證，這項驗證機制需要透過 aws-auth ConfigMap 進行管理。通常，這樣的工作流程並不是什麼大問題，但隨著 EKS 不同使用場景的增加，衍生了幾個限制和問題：</p>
+
+<ul>
+  <li>直接編輯 aws-auth ConfigMap 很容易遇到一些格式問題，例如：縮排錯誤、不正確的語法和格式、新版的 yaml 與目前線上環境中套用的不一致，新的 yaml 文件導致覆蓋了過去的設定，以上種種都有可能不小心造成災難。</li>
+  <li>整合 CI/CD pipeline 要達到自動化更新需要依賴 Kubernetes 資源的更新 (aws-auth ConfigMap)。不論是 AWS Lambda、Terraform、CloudFormation 或是 CDK，在過去，必須得透過呼叫 Kubernetes API 達到資源更新控制，難以透過 AWS EKS 本身提供的 API 完成自動化和權限管理，同時，在使用較嚴謹的 Kubernetes Role-Based Access Control (RBAC) 集群的安全管理下，團隊中的開發者使用有限的 Kubernetes 用戶身份可能難以透過 Kubernetes API 更新 aws-auth ConfigMap</li>
+  <li>當初建立 EKS Cluster 的 IAM 用戶被刪除使得團隊無法訪問 EKS Cluster，也就是本篇內容討論的主題。常見於整合 AWS Single-Sign On (AWS SSO) 或是同事離職的情境。即使是 AWS 的 Root 帳號也沒有辦法恢復 Kubernetes Cluster 的存取權限</li>
+</ul>
+
+<p>為了解決這個問題，我們可以導入使用 EKS Access Entry 優化 EKS 叢集的權限管理，甚至在上述情況中，拯救並恢復叢集的存取權限。EKS Access Entry 是一個解決方案，可以讓管理者在無需 IAM 用戶的情況下，恢復對 EKS 叢集的存取權限。</p>
+
+<h2 id="深入瞭解-eks-access-entry-的新功能">深入瞭解 EKS Access Entry 的新功能</h2>
+
+<p>EKS Access Entry 是一種用於管理 Amazon EKS 叢集存取權限的新解決方案。它提供了一個優化的方式來管理叢集的驗證模式和存取策略，並解決了過去使用 IAM Authenticator 和 aws-auth ConfigMap 管理存取權限所遇到的限制和問題。</p>
+
+<p>預設情況下，在建立 EKS 叢集時，會自動賦予操作建立 EKS Cluster 的 IAM 身份在 Kubernetes 的 Role-Based Access Control (RBAC) 中建立規則和 Kubernetes User，並且賦予 <code>system:master</code> 的操作身份。</p>
+
+<h3 id="kubernetes-role-based-access-control-rbac-是什麼">Kubernetes Role-Based Access Control (RBAC) 是什麼？</h3>
+
+<p>Kubernetes Role-Based Access Control (RBAC) 是一種在 Kubernetes 叢集中實現授權和權限管理的機制。使用 RBAC，您可以定義角色和角色綁定，以授予使用者或服務帳戶對叢集資源的特定權限。</p>
+
+<h3 id="eks-驗證身份驗證機制">EKS 驗證身份驗證機制</h3>
+
+<p>回顧前面所提，在 EKS 中，預設只為建立 EKS Cluster 的 IAM 身份 (比如：<code>arn:aws:iam::123456789:user/eason</code>) 賦予 <code>system:master</code> 群組操作身份。如果要允許一個新的 IAM 用戶 (比如：<code>arn:aws:iam::123456789:user/developer</code>) 能夠操作 EKS Cluster，<strong>在 IAM 主控台中設定任何的 IAM 策略，是無法授權任何 EKS Cluster 的訪問權限</strong>，而是需要透過更新 <code>aws-auth</code> ConfigMap 資源來賦予其他 IAM 身份的訪問：</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/auth-workflow.png" alt="EKS 預設驗證機制" /></p>
+
+<p>例如：要為我的 IAM 用戶授權訪問 EKS Cluster，可以透過使用 kubectl 命令為 <code>aws-auth</code> ConfigMap 中新增一個 <code>mapUsers</code> 區塊，其中包含了指定了一個使用者的 ARN (<code>arn:aws:iam::123456789:user/developer</code>) ，並且關聯 <code>system:master</code> 群組，表示 <code>developer</code> 使用者現在具有訪問 EKS Cluster 的存取權限。</p>
+
+<pre><code class="language-bash">$ kubectl get cm/aws-auth -o yaml -n kube-system
+apiVersion: v1
+data:
+  mapRoles: |
+    - groups:
+      - system:bootstrappers
+      - system:nodes
+      rolearn: arn:aws:iam::123456789:role/EKSManagedNodeWorkerRole
+      username: system:node:
+  mapUsers: |
+    - groups:
+      - system:masters
+      userarn: arn:aws:iam::123456789:user/developer
+      username: developer
+</code></pre>
+
+<h3 id="支援-eks-access-entry-後的叢集驗證模式變更">支援 EKS Access Entry 後的叢集驗證模式變更</h3>
+
+<p>這項更新支援以下 Kubernetes 和平台之後版本的 EKS Cluster：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Kubernetes version</th>
+      <th>Platform version</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1.28</td>
+      <td>eks.6</td>
+    </tr>
+    <tr>
+      <td>1.27</td>
+      <td>eks.10</td>
+    </tr>
+    <tr>
+      <td>1.26</td>
+      <td>eks.11</td>
+    </tr>
+    <tr>
+      <td>1.25</td>
+      <td>eks.12</td>
+    </tr>
+    <tr>
+      <td>1.24</td>
+      <td>eks.15</td>
+    </tr>
+    <tr>
+      <td>1.23</td>
+      <td>eks.17</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>將可以支援兩種不同的驗證模式：</p>
+
+<ol>
+  <li><strong>IAM 叢集驗證模式</strong>：這是 Amazon EKS 的預設驗證模式，它基於 IAM 進行身份驗證，並且依賴於 <code>aws-auth</code> ConfigMap。</li>
+  <li><strong>EKS 叢集驗證模式 (Access Entry)</strong>：這是 EKS Access Entry 引入的新驗證模式。它基於 Kubernetes 的原生身份驗證機制，但透過 EKS 本身的 API 完成，使得在 EKS 控制台介面上點一點就能完成允許一個 IAM User/Role 的操作成可能。</li>
+</ol>
+
+<p>在新建立的 EKS Cluster 中，您可能會注意到多了以下選項的更新：</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png" alt="EKS 驗證模式" /></p>
+
+<h2 id="eks-access-entry-的驗證方法">EKS Access Entry 的驗證方法</h2>
+
+<h3 id="先決條件">先決條件</h3>
+
+<p>在使用 EKS Access Entry 之前，您需要確保以下先決條件已滿足：</p>
+
+<ul>
+  <li>您的 Amazon EKS 叢集有啟用 EKS Access Entry 功能 (前面提到的驗證模式支援 EKS API 而不是只有 ConfigMap)。</li>
+  <li>您具有適當的 IAM 權限，以執行與 EKS Access Entry 相關的操作 (例如：<code>eks:CreateAccessEntry</code>、<code>eks:AssociateAccessPolicy</code>、<code>eks:DeleteAccessEntry</code>、<code>eks:DescribeAccessEntry</code> 等)。</li>
+</ul>
+
+<p>在啟用 Access Entry 驗證後，便可以使用這個新的驗證方式來管理叢集的存取權限。</p>
+
+<h3 id="存取策略的存取權限">存取策略的存取權限</h3>
+
+<p>每個 access entry 都有一個關聯的存取策略，該策略定義了對叢集資源的存取權限。存取策略使用 AWS Identity and Access Management (IAM) 的 JSON 格式來定義。以下是存取策略示例：</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>存取策略</th>
+      <th>描述</th>
+      <th>Kubernetes verb</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>AmazonEKSAdminPolicy</td>
+      <td>完全管理權限</td>
+      <td>*</td>
+    </tr>
+    <tr>
+      <td>AmazonEKSClusterAdminPolicy</td>
+      <td>叢集管理權限</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>AmazonEKSEditPolicy</td>
+      <td>讀寫權限</td>
+      <td>create, update, delete, get, list</td>
+    </tr>
+    <tr>
+      <td>AmazonEKSViewPolicy</td>
+      <td>只讀權限</td>
+      <td>get, list</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>上述表格可能會隨著版本更新有所變化，詳情請參考<sup id="fnref:access-policy-permissions" role="doc-noteref"><a href="#fn:access-policy-permissions" class="footnote" rel="footnote">1</a></sup>。</p>
+
+<h2 id="實施並利用-eks-access-entry-管理或恢復-eks-叢集存取權限">實施並利用 EKS Access Entry 管理或恢復 EKS 叢集存取權限</h2>
+
+<p>在遇到當初建立 EKS Cluster 的 IAM 用戶被刪除使得團隊無法訪問 EKS Cluster 的情況下，若當前的 IAM User/Role 具備 Access Entry 的操作權限，則可以透過這項功能恢復 EKS Cluster 的存取權限 (或是撤銷存取權限)。EKS Access Entry 可以使用 AWS CLI 或 AWS Management Console 進行操作。</p>
+
+<p><strong>EKS 主控台 (AWS Management Console)</strong></p>
+
+<p>(1) 在 EKS 叢集詳細資訊頁面中，點選 “Access” 選項。</p>
+
+<p>(2) 在 “IAM Access Entries” 頁面中，點選右上方的 “Create access entry” 按鈕。</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/create-access-entry.png" alt="新增 EKS Access Entry" /></p>
+
+<p>(3) 在 “Create access entry” 的對話框中，輸入以下資訊：
+    - IAM Principal ARN: 指定 IAM User 或 IAM Role 的 ARN。
+    - Kubernetes groups: 這個欄位用於關聯 IAM User/Role 使用 Kubernetes RBAC 裡面已經定義的 Kubernetes 群組 (Role &amp; Rolebinding)。若要直接關聯預先定義好的 Access Entry Policy (例如：<code>AmazonEKSClusterAdminPolicy</code>)，可以略過
+    - Kubernetes username: 您希望該 IAM 使用者或角色在 Kubernetes 中的使用者名稱，這裡可以輸入您希望的名稱或是省略，例如 <code>admin</code>。</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/config-iam-access-entry.png" alt="設定 IAM Access Entry" /></p>
+
+<p>(4) 在這個步驟中，可以選擇預設的的 Access Entry 以賦予 IAM 身份存取 EKS Cluster 的權限，例如：<code>arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy</code>。
+    - Access Scope: 用於賦予關聯策略影響的範圍，例如：指定 IAM 用戶只能使用這個權限操作特定 Kubernetes namespace。如果不限制，則選擇 Cluster 賦予 IAM 用戶可以使用這個權限操作整個叢集。</p>
+
+<p>(5) 點選 “Add Policy” 按鈕以關聯存取策略。</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/access-policy.png" alt="設定 Access Policy" /></p>
+
+<p>至此，您已成功使用 EKS Access Entry 為 EKS 叢集新增了一個 Cluster Admin。</p>
+
+<p><strong>AWS CLI</strong></p>
+
+<p>以下是使用 AWS CLI 透過 EKS Access Entry 為 EKS 叢集新增 Cluster Admin 的步驟 (叢集名稱以<code>eks-cluster</code> 為例)：</p>
+
+<p>(1) 更新你的 EKS 叢集配置以啟用 EKS Access Entry 驗證模式 (如果已經操作過這步驟可以省略)</p>
+
+<pre><code class="language-bash">aws eks update-cluster-config \
+          --name eks-cluster  \
+          --access-config authenticationMode=API_AND_CONFIG_MAP
+</code></pre>
+
+<p>(2) 建立一個 Access Entry，並指定 IAM principal ARN （例如：IAM User 或 IAM Role，這裡使用 <code>arn:aws:iam::0123456789012:role/eks-admin</code> 作為範例)</p>
+
+<pre><code class="language-bash"> aws eks create-access-entry \
+  --cluster-name eks-cluster \
+  --principal-arn "arn:aws:iam::0123456789012:role/eks-admin"
+
+</code></pre>
+
+<p>(3) 將存取策略關聯到剛剛建立的 Access Entry。這裡以 AmazonEKSAdminPolicy （提供完全的管理權限）為例</p>
+
+<pre><code class="language-bash"> aws eks associate-access-policy \
+  --cluster-name eks-cluster \
+  --principal-arn "arn:aws:iam::0123456789012:role/eks-admin" \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy \
+  --access-scope '{"type": "cluster"}
+</code></pre>
+
+<p>完成以上步驟後，您已成功透過 EKS Access Entry 為 EKS 叢集新增了一個 Cluster Admin。</p>
+
+<p><strong>其他權限設定</strong></p>
+
+<p>另一種使用情境為透過 EKS Access Entry 功能與 Kubernetes RBAC 本身的權限關聯。</p>
+
+<p>例如，我們可以建立一個名為 <code>pod-and-config-viewer</code> 的 Kubernetes Cluster，並授予該角色查看 Kubernetes Pods 的權限。</p>
+
+<pre><code class="language-yaml">apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pod-viewer-role
+rules:
+  - apiGroups: ['']
+    resources: ['pods', 'pods/log']
+    verbs: ['list', 'get', 'watch']
+</code></pre>
+
+<p>接著，我們將此角色綁定到 <code>pod-viewers</code> 群組上。</p>
+
+<p>註：Kubernetes Group (<code>pod-viewers</code>) 不需要事先建立即可操作。</p>
+
+<pre><code class="language-bash">kubectl create clusterrolebinding pod-viewer \
+  --clusterrole=pod-viewer-role \
+  --group=pod-viewers
+
+</code></pre>
+
+<p>接下來即可直接通過 EKS Access Entry 對應的功能將 IAM 角色 <code>arn:aws:iam::0123456789012:role/eks-pod-viewer</code> 關聯到 Kubernetes 群組 <code>pod-viewers</code> 上，進一步強化權限設定的靈活性。</p>
+
+<pre><code class="language-bash">aws eks create-access-entry \
+  --cluster-name eks-cluster \
+  --principal-arn "arn:aws:iam::0123456789012:role/eks-pod-viewer" \
+  --kubernetes-group pod-viewers
+</code></pre>
+
+<h2 id="總結">總結</h2>
+
+<p>本文介紹了 EKS Access Entry，這是 Amazon Elastic Kubernetes Service (EKS) 叢集的一種新的存取權限管理方法。此功能解決了過去使用 IAM Authenticator 和 aws-auth ConfigMap 進行權限管理時所遇到的問題，例如格式錯誤、自動更新困難以及 IAM 使用者被刪除等問題。相較於傳統的方法，EKS Access Entry 提供了一種更優化的方式來管理驗證模式和存取策略。</p>
+
+<p>此外，本篇內容也詳細說明了如何使用 EKS Access Entry 來管理或恢復 EKS 叢集的存取權限，包括在 AWS Management Console 或 AWS CLI 中進行操作的具體步驟。這些解決方案不僅可以在 IAM 使用者被刪除等緊急情況下恢復叢集的存取權限，也可用於日常的權限管理中，提高效率與靈活性。</p>
+
+<p>總結來說，EKS Access Entry 的出現為 EKS 叢集的權限管理帶來了重大的改進，使得管理者能更有效地實現對 EKS 叢集的權限管理，進一步提升效率和靈活性。</p>
+
+<h2 id="參考資料">參考資料</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:access-policy-permissions" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/access-policies.html#access-policy-permissions">Access policy permissions</a> <a href="#fnref:access-policy-permissions" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Kubernetes Service (EKS)" /><category term="Kubernetes" /><summary type="html"><![CDATA[在過去，管理 Amazon Elastic Kubernetes Service (EKS) 叢集的存取權限通常需要依賴 AWS IAM Authenticator 和 aws-auth ConfigMap 的組合。然而，這樣的管理方式可能遇到格式錯誤、自動化更新困難以及 IAM 用戶被刪除等限制和問題。]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="tw"><title type="html">使用 EKS Cluster Health 資訊監控你的叢集健康狀態</title><link href="https://easontechtalk.com/tw/utilize-eks-cluster-health-status/" rel="alternate" type="text/html" title="使用 EKS Cluster Health 資訊監控你的叢集健康狀態" /><published>2024-01-27T00:00:00+00:00</published><updated>2024-01-27T00:00:00+00:00</updated><id>https://easontechtalk.com/utilize-eks-cluster-health-status</id><content type="html" xml:base="https://easontechtalk.com/utilize-eks-cluster-health-status/"><![CDATA[<p>作為 AWS 用戶，監控 Elastic Kubernetes Service (EKS) 叢集的健康狀態對於確保其穩定性和性能至關重要。在過去，通常需要在 EKS 叢集遇到問題（例如，無法升級叢集）時才會發現 EKS 叢集出現了一些非預期的錯誤，並沒有一種很好的方式或是監控能夠直接了解可能破壞 EKS 叢集的因素。但最近，Amazon EKS 在 EKS 控制台和 API 中引入了一個小變更，提供了對叢集健康狀態的增強可見性，讓 EKS 用戶可以更好地了解其叢集的健康狀態。</p>
+
+<h2 id="這個更新是什麼">這個更新是什麼？</h2>
+
+<p>在 2023 年 12 月 28 日，Amazon EKS 宣布支援叢集健康狀態詳細資訊<sup id="fnref:whats-new-eks-surfaces-cluster-health-status-details" role="doc-noteref"><a href="#fn:whats-new-eks-surfaces-cluster-health-status-details" class="footnote" rel="footnote">1</a></sup>。</p>
+
+<p>這項健康狀態資訊有助於 EKS 用戶快速診斷、排除和解決叢集問題。因為底層基礎設施或配置問題可能導致 EKS 叢集受損，並阻止 EKS 應用更新或升級到較新的 Kubernetes 版本（例如：意外刪除 EKS 叢集關聯的 Subnet 或是 Security Group）。一般來說，EKS 用戶負責配置叢集基礎設施，例如 IAM Role 和 VPC 以及 Subnet 等。這項更新減少了 EKS 用戶需要花費大量時間和精力在進行基礎設施問題上除錯的時間，使運行穩健的 Kubernetes 環境變得更加容易。</p>
+
+<p>在本篇內容，我們將討論這個新功能以及如何利用這項健康狀態資訊有效監控您的 EKS 叢集。</p>
+
+<h2 id="監控您的-eks-叢集的健康狀態">監控您的 EKS 叢集的健康狀態</h2>
+
+<h3 id="為什麼要監控-eks-叢集健康狀態">為什麼要監控 EKS 叢集健康狀態</h3>
+
+<p>監控 EKS 叢集健康狀態能幫助您隨時了解叢集的整體健康狀態。若通過接收即時通知，可以快速識別任何問題或潛在問題，並立即響應且採取行動解決。這種主動的方法有助於防止任何 EKS 運行環境中非預期的錯誤，確保 EKS 叢集的順利運行。</p>
+
+<h3 id="describecluster-api-呼叫">DescribeCluster API 呼叫</h3>
+
+<p>監控 EKS 叢集健康狀態的第一種方法是利用 <code>DescribeCluster</code> API。這個 API 呼叫返回的內容中新增了一個新的欄位，用於了解有關叢集的詳細健康資訊，包括其當前狀態、幾種不同的錯誤碼<sup id="fnref:api-cluster-issue-contents" role="doc-noteref"><a href="#fn:api-cluster-issue-contents" class="footnote" rel="footnote">2</a></sup>和任何發現的問題，幫助 EKS 用戶了解有關叢集的健康狀態和性能的洞察。以下是使用 AWS CLI 命令輸出的一個範例：</p>
+
+<pre><code class="language-bash">$ aws eks describe-cluster --name eks --region eu-west-1
+{
+    "cluster": {
+        "name": "eks",
+        "arn": "arn:aws:eks:eu-west-1:11222334455:cluster/eks",
+        "createdAt": "2024-01-23T20:51:44.751000+00:00",
+        "version": "1.27",
+    }
+    "health": {
+            "issues": []
+        }
+    }
+}
+</code></pre>
+
+<p>程式設計開發者可以透過這項 API 變更設計屬於自己的監控邏輯，並且使用程式化的邏輯完成特定的自動化工作。</p>
+
+<h3 id="eks-控制台">EKS 控制台</h3>
+
+<p>除了上述的 API 操作，也可以通過 EKS Console 介面監控 EKS 叢集的健康狀態。在 EKS 控制台中，新增加了一個新的區塊會顯示整體叢集的健康狀態，並且獲取有關叢集健康狀態的即時資訊。</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/cover.png" alt="" /></p>
+
+<h2 id="整合-slack-通知進行監控">整合 Slack 通知進行監控</h2>
+
+<p>目前，EKS 這項更新並未支援主動通知或 CloudWatch 事件，這意味著如果需要透過可程式化邏輯了解目前的健康狀態，您需要手動調用 API。如果要要設定 EKS 叢集健康狀態的監控並接收通知，除了自己寫程式邏輯並且定時運行，也可以考慮使用 EventBridge 服務進行整合。EventBridge 是由 AWS 提供的一項服務，可讓您在不同的 AWS 服務和外部應用程序之間進行事件的觸發操作，甚至設置定時事件來觸發操作 (類似 cron job)。在現階段，一種簡單的做法是可以通過設定 EventBridge Scheduler 來觸發 AWS Lambda (Lambda function)，在 Lambda function 可以執行自行撰寫的程式邏輯，可以透過這項服務進行 <code>DescribeCluster</code> API 呼叫，並且整合其他應用，便於在叢集健康狀態有變更或更新時收到即時通知。</p>
+
+<p>下面是我實施的簡單解決方案：</p>
+
+<h3 id="解決方案概述">解決方案概述</h3>
+
+<ul>
+  <li>建立一個 Lambda 函數（<strong>MoninitorEKSClusterHealth</strong>）並且在程式中使用 <code>DescribeCluster</code> API 呼叫檢查 EKS 叢集是否有健康問題狀態</li>
+  <li>關聯 Slack 頻道與 AWS ChatBot，並且在與 AWS ChatBot 整合的過程中會一同建立一個 SNS Topic 用於發送任何通知</li>
+  <li>使用 EventBridge Scheduler 設置定時觸發條件，定期呼叫 Lambda 函數（<strong>MoninitorEKSClusterHealth</strong>）。如果叢集有健康問題，它會在執行期間拋出錯誤。</li>
+  <li>建立 CloudWatch alarm 以監控 Lambda 函數（<strong>MoninitorEKSClusterHealth</strong>）的錯誤，並在有錯誤事件時，觸發指定的 SNS Topic (這會直接進行即時的 Slack 通知)</li>
+</ul>
+
+<p><strong>建立 Lambda 函數</strong></p>
+
+<p>第一步是建立一個 Lambda 函數 (在這裡稱為 <strong>MoninitorEKSClusterHealth</strong>)，這個小程式可以幫助我們了解 EKS 叢集的健康狀態並捕獲任何錯誤，以下是我使用 Python 的一個簡單範例：</p>
+
+<pre><code class="language-python">import json
+import boto3
+
+def describe_eks_cluster(cluster_name):
+    eks_client = boto3.client('eks')
+    response = eks_client.describe_cluster(name=cluster_name)
+    health_issues = response['cluster']['health']['issues']
+
+    if len(health_issues) &gt; 0:
+        raise Exception("Cluster has health issues: {0}".format(health_issues))
+
+    return response
+
+def lambda_handler(event, context):
+    cluster_name = event['eks-cluster-name']
+    cluster_info = ''
+
+    cluster_info = describe_eks_cluster(cluster_name)
+    print(cluster_info)
+
+    return {
+        'statusCode': 200,
+        'body': 'success'
+    }
+
+</code></pre>
+
+<p>使用 <code>DescribeCluster</code> API 當叢集有健康問題時，API 回應會在健康問題的欄位中返回詳細資訊。例如，在一個關聯 Security Group 被意外刪除的 EKS 叢集中存在健康問題狀態，以下是從我的 <strong>MoninitorEKSClusterHealth</strong> 函數的紀錄檔中捕獲的錯誤訊息。它表明事件中存在一個與叢集健康問題相關的異常。具體的錯誤是 <code>Ec2SecurityGroupNotFound</code>：</p>
+
+<pre><code class="language-python">[ERROR] Exception: Cluster has health issues:
+
+['code': 'Ec2SecurityGroupNotFound',
+ 'message': "We couldn't find one or more security group associated with your cluster. Call eks update-cluster-config API to update subnets.",
+ 'resourceIds': ['sg-XXXXXXX']
+Traceback (most recent call last):
+File "/var/task/Lambda_function.py", line 18, in lambda_handler
+cluster_info = describe_eks_cluster(cluster_name)
+File "/var/task/lambda_function.py", line 10, in describe_eks_cluster raise Exception("Cluster has health issues: {01" format(health_issues))
+
+</code></pre>
+
+<p>在 Python 程式中設計邏輯中，當發現有 EKS 叢集健康問題拋出例外錯誤是關鍵，因為這種錯誤可以在 AWS Lambda 提供的 CloudWatch metric 生成錯誤，並且方便我們在後續能直接透過建立 AWS Lambda 的 CloudWatch alarm 來監控狀態。</p>
+
+<p><strong>在 AWS EventBridge Scheduler 中建立定期排程觸發規則</strong></p>
+
+<p>監控 EKS 叢集健康狀態的下一步是在 AWS EventBridge Scheduler 中建立一個新的規則以定期觸發執行我們在 AWS Lambda 上部署的應用程式。我同時也指定了在 AWS Lambda 函數中定義的 <code>eks-cluster-name</code> 參數，指定要監控的 EKS 叢集名稱，以便在觸發我在 AWS Lambda 上部署的應用程式時知道我要檢查哪個 EKS 叢集。</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/eventbridge-create-schedule.png" alt="" /></p>
+
+<p>此外，在我的環境中，為了避免短時間同時產生大量的 API 請求呼叫，我以 60 分鐘為觸發條件 (視情況甚至可以考慮 24 小時或是更長)，大部分情況下並不會短時間內大量變更 AWS 資源的網路拓撲、資源組態和設定 (例如通常可能只發生在每日的尖峰工作時段、例行的部署變更維護窗口或特定時間的部署行為)，短時間進行這項健康問題檢查並不是一個很理想的設計，這可能會產生大量不必要的運算資源和 Lambda 運行費用。</p>
+
+<p><strong>設置 CloudWatch Alarm 警報</strong></p>
+
+<p>一旦設定好一個定期觸發規則和可以回傳 EKS 健康狀態的應用程式來報告叢集健康狀況，我們可以設置一個 CloudWatch Alarm 警報，並且僅監控這個 Lambda 函式 (<strong>MoninitorEKSClusterHealth</strong>) 以捕捉任何錯誤。在我的環境中，我設定了一個 CloudWatch Alarm，並且監控 Lambda 函式 (<strong>MoninitorEKSClusterHealth</strong>) 下的 <code>Erros</code> 指標（該指標屬於 <code>AWS/Lambda</code> 命名空間）：</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/cw-alarm.png" alt="" /></p>
+
+<p>並且在發生警報時觸發動作是將訊息通知傳遞至先前 AWS ChatBot 整合的過程中一同建立的一個 SNS Topic。</p>
+
+<p>如果 EKS 叢集有任何健康問題，Lambda 函式在執行時將拋出錯誤，並且 CloudWatch Alarm 警報將會翻轉為 <code>In alarm</code> 狀態，透過 CloudWatch Alarm 警報，將會將通知傳送至我們指定的 SNS Topic，實時透過 AWS ChatBot 觸發 Slack 通知。在我的帳號中，我已經預先設定了 AWS ChatBot (Slack chatbot) 並訂閱了一個 SNS Topic<sup id="fnref:set-up-aws-chat-bot" role="doc-noteref"><a href="#fn:set-up-aws-chat-bot" class="footnote" rel="footnote">3</a></sup>。幫助我可以在 EKS 叢集發生健康問題時，獲得更新並立即採取行動來解決 EKS 叢集的任何問題。</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/slack-execution.png" alt="" /></p>
+
+<p>AWS Chatbot 還提供查看 Lambda 函式的錯誤日誌的功能，在我們的應用程式中會直接顯示 <code>DescribeCluster</code> API 的詳細資訊，這對於能在數分鐘內透過 Slack 的聊天視窗能直接瞭解為什麼 EKS 叢集出現健康問題非常有用：</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/slack-execution-details.png" alt="" /></p>
+
+<h2 id="總結">總結</h2>
+
+<p>總結此篇內容，監控您的 EKS 叢集的健康狀態對於維護其穩定性、性能和安全性至關重要。通過這項功能性的更新，利用 <code>DescribeCluster</code> API 呼叫或檢視 EKS 控制台上的資訊，可以隨時瞭解 EKS 叢集過去難以察覺的設定問題或是其他非預期錯誤，能夠更容易發現並且採取行動解決。</p>
+
+<p>此外，這篇內容不但介紹了如何使用 <code>DescribeCluster</code> API 呼叫的相關細節，並且也分享了如何透過整合不同 AWS 服務，包含 EventBridge、AWS Lambda 和 CloudWatch 等，在叢集健康狀態發生變化時，能夠獲得實時的 Slack 訊息通知，節省除錯時間並且簡化維運 EKS 工作。</p>
+
+<h2 id="參考資料">參考資料</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:whats-new-eks-surfaces-cluster-health-status-details" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/about-aws/whats-new/2023/12/amazon-eks-surfaces-cluster-health-status-details/">Amazon EKS 現在顯示叢集健康狀態詳細信息</a> <a href="#fnref:whats-new-eks-surfaces-cluster-health-status-details" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:api-cluster-issue-contents" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/APIReference/API_ClusterIssue.html#API_ClusterIssue_Contents">Amazon EKS API 參考 - ClusterIssue</a> <a href="#fnref:api-cluster-issue-contents" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:set-up-aws-chat-bot" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/chatbot/latest/adminguide/slack-setup.html">設置 AWS Chatbot - 開始使用 Slack</a> <a href="#fnref:set-up-aws-chat-bot" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Kubernetes Service (EKS)" /><category term="Kubernetes" /><summary type="html"><![CDATA[作為 AWS 用戶，監控 Elastic Kubernetes Service (EKS) 叢集的健康狀態對於確保其穩定性和性能至關重要。在過去，通常需要在 EKS 叢集遇到問題（例如，無法升級叢集）時才會發現 EKS 叢集出現了一些非預期的錯誤，並沒有一種很好的方式或是監控能夠直接了解可能破壞 EKS 叢集的因素。但最近，Amazon EKS 在 EKS 控制台和 API 中引入了一個小變更，提供了對叢集健康狀態的增強可見性，讓 EKS 用戶可以更好地了解其叢集的健康狀態。]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2024/utilize-eks-cluster-health-status/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2024/utilize-eks-cluster-health-status/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="tw"><title type="html">EKS Managed Node Group: 解決 Ec2SubnetInvalidConfiguration 錯誤</title><link href="https://easontechtalk.com/tw/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/" rel="alternate" type="text/html" title="EKS Managed Node Group: 解決 Ec2SubnetInvalidConfiguration 錯誤" /><published>2023-06-03T00:00:00+00:00</published><updated>2023-06-03T00:00:00+00:00</updated><id>https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error</id><content type="html" xml:base="https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/"><![CDATA[<p>Amazon Elastic Kubernetes Service（EKS）是一個託管的 Kubernetes 服務，使許多 Kubernetes 的管理者能夠在數十分鐘內透過命令快速建立及輕鬆在 AWS 上運行 Kubernetes Cluster，並且簡化了許多操作；2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) <sup id="fnref:eks-managed-nodegroup" role="doc-noteref"><a href="#fn:eks-managed-nodegroup" class="footnote" rel="footnote">1</a></sup>，並且能夠自動建立和管理 EC2 instances，並將這些 instances 加入到 Kubernetes 集群中，使得用戶能夠更輕鬆新增、擴展 Kubernetes Cluster 所需要的運算節點數量，甚至能夠透過 API 或一鍵集成的方式升級節點的版本。</p>
+
+<p>然而，在新增、升級 Managed Node Groups 的過程，有可能會遇到 <code>Ec2SubnetInvalidConfiguration</code> 錯誤，因此，本文將進一步分析這個錯誤的原因、常見情境以及解決方法。</p>
+
+<h2 id="如何確認該問題">如何確認該問題</h2>
+
+<p>要檢查 EKS Managed Node Groups 是否存在 <code>Ec2SubnetInvalidConfiguration</code> 錯誤，可以透過 EKS Console 或是 AWS CLI 命令確認是否存在任何健康檢查錯誤 (Health Issue)。例如，透過點擊 Cluster 底下的 <code>Compute</code> 頁籤 &gt; 點擊 <code>Node groups</code> 進入到節點組的詳細頁面後，可以檢查 <code>Health Issues</code> 頁籤是否存在相關的錯誤訊息：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-create-failed.png" alt="" /></p>
+
+<p>根據文件提到 EKS Managed Node Group 的升級流程 <sup id="fnref:eks-managed-nodegroup-update-behavior" role="doc-noteref"><a href="#fn:eks-managed-nodegroup-update-behavior" class="footnote" rel="footnote">2</a></sup>，如果升級或是新建節點超過 15-20 分鐘後卡住，很可能是某些原因使得工作節點在運作時存在一些問題，過一段時間後，通常有機會透過這些資訊進一步排查可能的原因。以下是使用 AWS CLI 命令的範例：</p>
+
+<pre><code class="language-bash">$ aws eks describe-nodegroup --nodegroup-name broken-nodegroup --cluster eks --region eu-west-1
+{
+    "nodegroup": {
+        "nodegroupName": "broken-nodegroup",
+        "clusterName": "eks",
+        "version": "1.25",
+        "releaseVersion": "1.25.9-20230526",
+        "status": "CREATE_FAILED",
+        "capacityType": "ON_DEMAND",
+        "subnets": [
+            "subnet-AAAAAAAAAAAAAAAAA",
+            "subnet-BBBBBBBBBBBBBBBBB"
+        ],
+        "amiType": "AL2_x86_64",
+        "health": {
+            "issues": [
+                {
+                    "code": "Ec2SubnetInvalidConfiguration",
+                    "message": "One or more Amazon EC2 Subnets of [subnet-AAAAAAAAAAAAAAAAA, subnet-BBBBBBBBBBBBBBBBB] for node group broken-nodegroup does not automatically assign public IP addresses to instances launched into it. If you want your instances to be assigned a public IP address, then you need to enable auto-assign public IP address for the subnet. See IP addressing in VPC guide: https://docs.aws.amazon.com/vpc/latest/userguide/vpc-ip-addressing.html#subnet-public-ip",
+                    "resourceIds": [
+                        "subnet-AAAAAAAAAAAAAAAAA",
+                        "subnet-BBBBBBBBBBBBBBBBB"
+                    ]
+                }
+            ]
+        },
+        "updateConfig": {
+            "maxUnavailable": 1
+        },
+        ...
+    }
+}
+</code></pre>
+
+<p>上述範例為在建立節點組時發生失敗並且處於 <code>CREATE_FAILED</code> 狀態。</p>
+
+<h2 id="常見情境和發生原因">常見情境和發生原因</h2>
+
+<p>按照錯誤例外的定義 <sup id="fnref:eks-issues" role="doc-noteref"><a href="#fn:eks-issues" class="footnote" rel="footnote">3</a></sup>，可以簡單得知這個錯誤通常是由於 EKS Managed Node Group 所指定的 subnet 沒有啟用 auto-assign public IP address (自動分配 IP 地址) 導致。</p>
+
+<p>預設情況下，當 Managed Node Group 在建立 EC2 instances 時，會需要依賴 Subnet 本身啟用這項功能，如果 subnet 沒有啟用 auto-assign public IP address，EC2 instances 會無法獲取到公開的 IP 位址 (Public IPv4)，因此將無法與 Internet 進行通訊。EKS Managed Node Groups 的這項檢查同時衍生了兩個不同的使用情境：Public Subnet (公有子網) 跟 Private Subnet (私有子網)。</p>
+
+<p>Public Subnet 與 Private Subnet 是指在 Amazon Virtual Private Cloud (VPC) 中設定不同的 Subnet。其中，Public Subnet 意味著在這個 Subnet 中的資源可以直接與 Internet 進行通訊、連到公開的網際網路，而 Private Subnet 則無法直接與 Internet 進行通訊：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/subnet-diagram.png" alt="" /></p>
+
+<p>(圖片來源：Amazon Virtual Private Cloud 使用手冊 <sup id="fnref:subnet-diagram" role="doc-noteref"><a href="#fn:subnet-diagram" class="footnote" rel="footnote">4</a></sup>)</p>
+
+<p><strong>簡單來說，如果 Subnet 存在指向 Internet Gateway 資源的路由 (<code>0.0.0.0/0</code>)，通常可以視為預期這個 Subnet 將能夠直接通往 Internet 的大門，反之，這個 Subnet 預計規劃存在有限且私有的網路環境中。</strong></p>
+
+<h3 id="在-public-subnet-公有子網-遇到這個錯誤">在 Public Subnet (公有子網) 遇到這個錯誤</h3>
+
+<p>在之前，由於 EKS 在建立 Managed Node Groups 時預設會幫所有節點組底下的 Node Groups 啟用跟配發 Public IPv4 地址 (不論是否放在 Public Subnet 或是 Private Subnet)，但目前這項功能已經於 2020 年得到更新 <sup id="fnref:eks-feature-request-607" role="doc-noteref"><a href="#fn:eks-feature-request-607" class="footnote" rel="footnote">5</a></sup>。因此，如果你預期你部署的 EKS Managed Node Groups 需要配發公開的 IPv4 地址，並且允許直接與網際網路連線。</p>
+
+<p>在這種情況下，在建立或是升級 Managed Node Groups 使用 Public Subnet 時，需要確保 Subnet 本身的設定允許自動配發 Public IPv4 地址 (<code>MapPublicIpOnLaunch</code>)：</p>
+
+<pre><code class="language-bash">$ aws ec2 describe-subnets --subnet-ids subnet-XXXXXXXXX
+"Subnets": [
+        {
+            "CidrBlock": "192.168.64.0/19",
+            "MapPublicIpOnLaunch": true,
+            "State": "available",
+            "SubnetId": "subnet-XXXXXXXXXXX",
+            "VpcId": "vpc-XXXXXXXXXXX",
+            ...
+        }
+    ]
+</code></pre>
+
+<h3 id="在-private-subnet-私有子網-遇到這個錯誤">在 Private Subnet (私有子網) 遇到這個錯誤</h3>
+
+<p>但你可能會說：「我本來預期這個 Subnet 就是 Private Subnet，甚至我可能一開始建立時都正常」您可能會好奇，為什麼 EKS Managed Groups 可能在運行階段或是升級過程會提示我的 Node Groups 指定的 Subnet 沒有自動關聯 Public IPv4 地址。</p>
+
+<p>對於 Amazon EKS，VPC 關聯 Subnet 的屬性仍適用前面所提到的原則 <sup id="fnref:eks-vpc-subnet-considerations" role="doc-noteref"><a href="#fn:eks-vpc-subnet-considerations" class="footnote" rel="footnote">6</a></sup>，因此，在很大機率下，這通常涉及相關 Subnet 路由表設定的錯誤：</p>
+
+<ul>
+  <li>A public subnet is a subnet with a route table that includes a route to an internet gateway, whereas a private subnet is a subnet with a route table that doesn’t include a route to an internet gateway.</li>
+</ul>
+
+<p>例如：以下是一個在環境中 Node Groups 運行一段時間後因為 Subnet 設置問題導致節點組處於 <code>DEGRADED</code> 狀態，並存在錯誤訊息。</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-degraded.png" alt="" /></p>
+
+<h2 id="解決方法和相關步驟">解決方法和相關步驟</h2>
+
+<h3 id="public-subnet-公有子網">Public Subnet (公有子網)</h3>
+
+<p>為了解決這個問題，若你在部署 Managed Node Groups 選擇的是 Public Subnet，需要確保 Subnet 啟用了 Auto-assign Public IP address 功能，<a href="https://docs.aws.amazon.com/vpc/latest/userguide/modify-subnets.html#subnet-public-ip">參考以下步驟</a>：</p>
+
+<ol>
+  <li>登錄 AWS Console，並進入 <a href="https://console.aws.amazon.com/vpc/">VPC 管理頁面</a>。</li>
+  <li>選擇您要使用的 Subnet &gt; Edit Subnet Settings，然後選擇「Enable auto-assign public IPv4 address」。</li>
+  <li>勾選後點擊保存</li>
+</ol>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/enable-auto-assign-up-settings.png" alt="" /></p>
+
+<p>完成這些步驟後，如果節點狀態為失敗，可以將失敗的 Managed Node Groups 刪除後再次重新建立一個新的 Managed Node Group，並且選擇上述的 Subnet。在由 EKS 啟動這些 EC2 instances 時，就能根據 Subnet 的設定正確獲取到 Public IP 位址。</p>
+
+<p>如果您遇到的問題不是由於 subnet 沒有啟用 auto-assign public IP address 所導致的，請參考錯誤信息 <sup id="fnref:eks-issues:1" role="doc-noteref"><a href="#fn:eks-issues" class="footnote" rel="footnote">3</a></sup>。</p>
+
+<h3 id="private-subnet-私有子網">Private Subnet (私有子網)</h3>
+
+<p>在前面的內容中描述了一個在預期的私有子網遇到這個錯誤，這通常很可能是因為 EKS 嘗試啟動或是檢查 Managed Node Groups 所使用的 Subnet 時，因為路由指向 Internet Gateway 而認為這個 Subnet 屬於 Public Subnet，而不是預期的 Private Subnet 屬性，最終獲得這樣的例外訊息：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/incorrect-private-subnet-route.png" alt="" /></p>
+
+<p>要解決這個問題，可以透過正確的設定 Private Subnet 對應的 Route Table (路由表) 並且保留 VPC 內部的請求，同時設定正確的非 VPC 請求路由 (例如：針對 <code>0.0.0.0/0</code> 路由移除 Internet Gateway)，指向其他目標像是 <a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html">NAT Gateway</a> 同樣提供僅內部向外部訪問網際網路的能力，以確保工作節點在啟動時仍可以從其他來源下載 Image (例如：Docker Hub)、跟 EKS API Server 互動等。</p>
+
+<h2 id="總結">總結</h2>
+
+<p>在這篇內容中，我們提到了當建立或升級 EKS Managed Node Group 時遇到 <code>Ec2SubnetInvalidConfiguration</code> 錯誤的常見情境和發生原因。在 Public Subnet 情況下，需要確保 Subnet 啟用了 Auto-assign Public IP address 功能；在 Private Subnet 情況下，需要透過正確的設定 Private Subnet 對應的 Route Table 並且保留 VPC 內部的請求，同時設定正確的非 VPC 請求路由，指向其他目標，像是 NAT Gateway。</p>
+
+<p>透過遵循上述的解決方法和相關步驟，希望能幫助在閱讀這篇內容的你更有方向的排查並且解決這個錯誤，確保 Managed Node Group 正常運行。</p>
+
+<h2 id="參考資源">參考資源</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:eks-managed-nodegroup" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/blogs/containers/eks-managed-node-groups/">Extending the EKS API: Managed Node Groups</a> <a href="#fnref:eks-managed-nodegroup" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-nodegroup-update-behavior" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/managed-node-update-behavior.html#managed-node-update-scale-up">Managed node update behavior - Scale up phase</a> <a href="#fnref:eks-managed-nodegroup-update-behavior" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-issues" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/APIReference/API_Issue.html">Amazon EKS resource Issue</a> <a href="#fnref:eks-issues" class="reversefootnote" role="doc-backlink">&#8617;</a> <a href="#fnref:eks-issues:1" class="reversefootnote" role="doc-backlink">&#8617;<sup>2</sup></a></p>
+    </li>
+    <li id="fn:subnet-diagram" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/vpc/latest/userguide/configure-subnets.html#subnet-diagram">Subnets for your VPC - Subnet diagram</a> <a href="#fnref:subnet-diagram" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-feature-request-607" role="doc-endnote">
+      <p><a href="https://github.com/aws/containers-roadmap/issues/607">[EKS] [request]: Remove requirement of public IPs on EKS managed worker nodes #607</a> <a href="#fnref:eks-feature-request-607" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-vpc-subnet-considerations" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/network_reqs.html#network-requirements-subnets">Amazon EKS VPC and subnet requirements and considerations - Subnet requirements and considerations</a> <a href="#fnref:eks-vpc-subnet-considerations" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Kubernetes Service (EKS)" /><category term="Kubernetes" /><summary type="html"><![CDATA[Amazon Elastic Kubernetes Service（EKS）是一個託管的 Kubernetes 服務，使許多 Kubernetes 的管理者能夠在數十分鐘內透過命令快速建立及輕鬆在 AWS 上運行 Kubernetes Cluster，並且簡化了許多操作；2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) 1，並且能夠自動建立和管理 EC2 instances，並將這些 instances 加入到 Kubernetes 集群中，使得用戶能夠更輕鬆新增、擴展 Kubernetes Cluster 所需要的運算節點數量，甚至能夠透過 API 或一鍵集成的方式升級節點的版本。 Extending the EKS API: Managed Node Groups &#8617;]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="tw"><title type="html">EKS Managed Node Group: 解決 PodEvictionFailure 錯誤</title><link href="https://easontechtalk.com/tw/troubleshooting-eks-PodEvictionFailure-error/" rel="alternate" type="text/html" title="EKS Managed Node Group: 解決 PodEvictionFailure 錯誤" /><published>2023-06-03T00:00:00+00:00</published><updated>2023-06-03T00:00:00+00:00</updated><id>https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error</id><content type="html" xml:base="https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error/"><![CDATA[<p>自上篇提及 2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) <sup id="fnref:eks-managed-nodegroup" role="doc-noteref"><a href="#fn:eks-managed-nodegroup" class="footnote" rel="footnote">1</a></sup> 和簡介 <code>Ec2SubnetInvalidConfiguration</code> 的錯誤排查後，本篇內容將進一步探討在執行 Managed Node Group 升級過程遭遇的 <code>PodEvictionFailure</code> 錯誤。</p>
+
+<p><code>PodEvictionFailure</code> 錯誤是在 EKS 進行節點組升級時會遇到的常見錯誤之一，通常是使用 AWS Console 介面、<code>aws eks update-nodegroup-version</code> 命令或是 <code>UpdateNodegroupVersion</code> API 呼叫時產生。本文將進一步分析這個錯誤的原因、常見情境以及解決方法。</p>
+
+<h2 id="如何確認該問題">如何確認該問題</h2>
+
+<p>要檢查 EKS Managed Node Groups 是否存在 <code>PodEvictionFailure</code> 錯誤，可以透過 EKS Console 或是 AWS CLI 命令確認是否存在任何錯誤。例如，透過點擊 Cluster 底下的 <code>Compute</code> 頁籤 &gt; 點擊 <code>Node groups</code> 進入到節點組的詳細頁面後，可以檢查 <code>Update history</code> 頁籤相關的升級事件是否存在相關的錯誤訊息：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png" alt="" /></p>
+
+<p>再進一步點擊個別的升級事件，便可以進一步看到詳細資訊和錯誤：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-detail.png" alt="" /></p>
+
+<p>根據文件提到 EKS Managed Node Group 的升級流程 <sup id="fnref:eks-managed-nodegroup-update-behavior" role="doc-noteref"><a href="#fn:eks-managed-nodegroup-update-behavior" class="footnote" rel="footnote">2</a></sup>，如果升級或是新建節點超過 15-20 分鐘後卡住，很可能是某些原因使得工作節點在運作時存在一些問題，過一段時間後，通常有機會透過這些資訊進一步排查可能的原因。以下是使用 AWS CLI 命令的範例：</p>
+
+<pre><code class="language-bash">$ aws eks list-updates --name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt;
+{
+    "updateIds": [
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE"
+    ]
+}
+
+$ aws eks describe-update --name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt; --update-id AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE
+{
+    "update": {
+        "id": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE",
+        "status": "Failed",
+        "type": "VersionUpdate",
+        "params": [
+            {
+                "type": "Version",
+                "value": "1.26"
+            },
+            {
+                "type": "ReleaseVersion",
+                "value": "1.26.4-20230526"
+            }
+        ],
+        "createdAt": "2023-06-03T17:19:38.068000+00:00",
+        "errors": [
+            {
+                "errorCode": "PodEvictionFailure",
+                "errorMessage": "Reached max retries while trying to evict pods from nodes in node group &lt;NODE_GROUP_NAME&gt;",
+                "resourceIds": [
+                    "ip-192-168-2-44.eu-west-1.compute.internal"
+                ]
+            }
+        ]
+    }
+}
+</code></pre>
+
+<p>上述範例為在升級時嘗試停用 Pod 超出重試的次數導致失敗，並且該次升級為 <code>Failed</code> 狀態。</p>
+
+<h2 id="常見情境和發生原因">常見情境和發生原因</h2>
+
+<h3 id="pod-disruption-budget-pdb">Pod Disruption Budget (PDB)</h3>
+
+<p>Pod Disruption Budget (PDB) 是 Kubernetes 內的一個資源物件，用於確保在進行維護、升級、回滾等操作時，對於特定部署的可用性不會被破壞 <sup id="fnref:pdb" role="doc-noteref"><a href="#fn:pdb" class="footnote" rel="footnote">3</a></sup>。</p>
+
+<p>PDB 通常用在設定 Pod 的最小 (可用) 運行數量，當進行維護操作時，Kubernetes 會確保在目前集群中 Pod 的運行數量不會低於這個數字。這樣可以確保在進行維護等操作時，服務的可用性不會受到影響或是中斷 (Pod)。</p>
+
+<p>以下是一個 PDB 的範例：</p>
+
+<pre><code>apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: my-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: my-app
+
+</code></pre>
+
+<p>在這個範例中，我們設定了一個 PDB，最小可用數量為 2 個，選擇器為 <code>app=my-app</code>。這表示在進行維護等操作時，Kubernetes 會確保至少有 2 個符合選擇器的 Pod 可用。</p>
+
+<p>PDB 的設定可以幫助您在進行維護等操作時確保 Pod 的可用性，同時也可以減少可能出現的 <code>PodEvictionFailure</code> 錯誤。在設計應用程式時，建議您考慮使用 PDB 來確保應用程式的可用性。</p>
+
+<h4 id="podevictionfailure-和-pdb-之間的關係">PodEvictionFailure 和 PDB 之間的關係</h4>
+
+<p><code>PodEvictionFailure</code> 錯誤通常是由於 EKS 無法在要更新的工作節點上節點上停用 Pod 引起。在進行 Managed Node Group 升級替換操作時，如果目前要被更新的節點上運行的目標 Pod 的運行數量低於 PDB 中設定的最小值，那麼 Kubernetes 就會拒絕刪除 Pod，在這種情況下，就可能會觸發升級過程產生的 <code>PodEvictionFailure</code> 錯誤。例如，以下的環境中部署了一個 Kubernetes Deployment (<code>nginx-deploymnet</code>)，並且在目前環境中的唯一節點 <code>ip-192-168-2-44.eu-west-1.compute.internal</code> 上運行：</p>
+
+<pre><code class="language-bash">NAMESPACE     NAME                                   READY   STATUS    RESTARTS      AGE   IP               NODE                                           NOMINATED NODE   READINESS GATES
+default       pod/nginx-deployment-ff6774dc6-dntfm   1/1     Running   0             45m   192.168.7.16     ip-192-168-2-44.eu-west-1.compute.internal
+
+NAMESPACE     NAME                               READY   UP-TO-DATE   AVAILABLE   AGE   CONTAINERS
+default       deployment.apps/nginx-deployment   1/1     1            1           49m   nginx
+</code></pre>
+
+<p>同時，該環境中設定了以下 <code>PodDisruptionBudget</code> 資源 (這個 <code>nginx-deployment</code> 所有 Pod 存在 <code>app=nginx</code> 標籤)：</p>
+
+<pre><code class="language-yaml">apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nginx-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: nginx
+</code></pre>
+
+<p>通常在執行更新或是替換節點過程時，我們通常會需要將節點標記為不可調度以及停用在上面運行的應用，在 Kubernetes 中，提供了 <code>kubectl drain</code> 這類方法支援這個操作 <sup id="fnref:kubectl-drain" role="doc-noteref"><a href="#fn:kubectl-drain" class="footnote" rel="footnote">4</a></sup>。一旦執行 <code>kubectl drain</code> 將節點設定為維護狀態時，它會觸發 Kubernetes Scheduler 將節點上的 Pod 進行重新調度。</p>
+
+<p>此外，在重新調度之前，<code>kubectl drain</code> 命令會將節點標記為不可調度，這樣新的 Pod 就不會被調度到該節點上。同時，已在節點上運行的 Pod 會被逐一停用。但在違反 <code>PodDisruptionBudget</code> 情況下，這樣的操作很可能會失敗，例如，以下就是一個在存在 PDB 時無法正確停用的範例：</p>
+
+<pre><code class="language-bash">$ kubectl drain ip-192-168-2-44.eu-west-1.compute.internal --ignore-daemonsets --delete-emptydir-data
+node/ip-192-168-2-44.eu-west-1.compute.internal already cordoned
+WARNING: ignoring DaemonSet-managed Pods: kube-system/aws-node-n9lc5, kube-system/kube-proxy-lwxcb
+evicting pod kube-system/coredns-6866f5c8b4-r96z8
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+evicting pod kube-system/coredns-6866f5c8b4-h296r
+
+pod/coredns-6866f5c8b4-r96z8 evicted
+pod/coredns-6866f5c8b4-h296r evicted
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+...
+</code></pre>
+
+<h3 id="deployment-允許-容忍-在存在污點-taint-的節點上部署">Deployment 允許 (容忍) 在存在污點 (Taint) 的節點上部署</h3>
+
+<p>在 Kubernetes 中，Taints（污點）和 Tolerations（容忍）是用於控制 Pod 能否被調度到特定節點的機制。Taints 是對節點的標記，表示節點具有某些特定的限制或要求。而 Tolerations 則是由 Pod 定義，用於告訴 Kubernetes 這個 Pod 可以容忍哪些節點的 Taints，進而允許或阻止 Pod 被調度到符合條件的節點上。<sup id="fnref:k8s-taints-tolerations" role="doc-noteref"><a href="#fn:k8s-taints-tolerations" class="footnote" rel="footnote">5</a></sup></p>
+
+<p>然而，不正確的 <code>tolerations</code> 設定很可能使得在預期進行替換的節點中，仍持續調度應用程式到節點上，例如，以下範例直接忽略了在 Node 關聯的 Taint 設定：</p>
+
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  ...
+  template:
+    ...
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+      tolerations:
+        - operator: "Exists"
+    ...
+</code></pre>
+
+<p>如同前面提到，在重新調度之前，<code>kubectl drain</code> 命令會將節點標記為不可調度，這樣新的 Pod 就不會被調度到該節點上。執行這項操作時，Kubernetes 也會替節點設定 <code>node.kubernetes.io/unschedulable:NoSchedule</code> 的污點：</p>
+
+<pre><code class="language-bash">$ kubectl get nodes
+NAME                                         STATUS                     ROLES    AGE    VERSION
+ip-192-168-2-44.eu-west-1.compute.internal   Ready,SchedulingDisabled   &lt;none&gt;   126m   v1.25.9-eks-0a21954
+
+$ kubectl describe node
+Name:               ip-192-168-2-44.eu-west-1.compute.internal
+...
+Taints:             node.kubernetes.io/unschedulable:NoSchedule
+</code></pre>
+
+<p>但在使用上述 <code>tolerations</code> 設定時，對應應用程式的調度行為會直接忽略這項設定，例如，以下就是在 Node 執行 <code>kubectl drain</code> 仍持續執行 Pod 調度的過程：</p>
+
+<pre><code class="language-bash">NAME                                READY   STATUS    RESTARTS   AGE   IP              NODE
+nginx-deployment-6876484bcc-h28sn   1/1     Running   0          25s   192.168.9.175   ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-h28sn   1/1     Terminating   0          38s   192.168.9.175   ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   0/1     Pending       0          0s    &lt;none&gt;          ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   0/1     ContainerCreating   0          0s    &lt;none&gt;          ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   1/1     Running             0          2s    192.168.18.140   ip-192-168-2-44.eu-west-1.compute.internal
+</code></pre>
+
+<p>對於 EKS Managed Node Group 升級操作的行為來說，該節點並為完全停用 Pod 且屬於未清空的狀態，使得更新過程發生 <code>PodEvictionFailure</code> 錯誤。</p>
+
+<h3 id="pod-本身存在錯誤">Pod 本身存在錯誤</h3>
+
+<p>如果並非上述問題導致，則可能指出 Pod 基於某些原因無法正常關閉，例如：應用程式與 NFS 互動但執行操作卡在 I/O 行為、網路問題或資源不足 (像是 CPU 負載過高使得系統無法反應) 等原因導致。</p>
+
+<p>要先確定出錯 Pod 的狀態和原因，您可以使用以下命令來查看詳細的 Pod 狀態或是相關的紀錄日誌來確定問題的原因：</p>
+
+<pre><code class="language-bash">$ kubectl describe pod
+$ kubectl logs &lt;POD_NAME&gt;
+</code></pre>
+
+<h2 id="解決方法和相關步驟">解決方法和相關步驟</h2>
+
+<h3 id="pod-disruption-budget-pdb-1">Pod Disruption Budget (PDB)</h3>
+
+<p>要確認是否因為 Pod Disruption Budget (PDB) 影響升級，可以透過以下命令確認目前有的 PDB 設定：</p>
+
+<pre><code class="language-bash">kubectl get pdb --all-namespaces
+</code></pre>
+
+<p>如果有開啟 EKS Control Plane Logging (稽核記錄)，也可以透過 CloudWatch Log Insight 功能篩選並檢查是否存在任何相關的失敗事件，</p>
+
+<ol>
+  <li>在 <code>Cluster</code> &gt; <code>Logging</code> (記錄) 標籤下，選擇 <code>Audit</code> (稽核) 可以直接開啟 Amazon CloudWatch Console。</li>
+  <li>在 Amazon CloudWatch 主控台中，選擇 Logs (日誌)。然後，選擇 Log Insights (日誌洞察) 對 EKS 產生的稽核紀錄檔進行篩選</li>
+</ol>
+
+<p>以下為相關查詢範例：</p>
+
+<pre><code class="language-query">fields @timestamp, @message
+| filter @logStream like "kube-apiserver-audit"
+| filter ispresent(requestURI)
+| filter objectRef.subresource = "eviction"
+| display @logStream, requestURI, responseObject.message
+| stats count(*) as retry by requestURI, responseObject.message
+</code></pre>
+
+<p>透過上述檢視稽核紀錄，可以進一步確認在停用 Pod 事件中是否存在任何因為 Pod Disruption Budget 影響的具體資訊：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png" alt="" /></p>
+
+<p>如果是因為 PDB 導致升級失敗，可以修改或是移除 PDB 後，再次嘗試執行升級：</p>
+
+<pre><code class="language-bash"># Edit
+$ kubectl edit pdb &lt;PDB_NAME&gt;
+
+# Delete
+$ kubectl delete pdb &lt;PDB_NAME&gt;
+</code></pre>
+
+<h3 id="錯誤的-tolerations-設定">錯誤的 Tolerations 設定</h3>
+
+<p>前面提到不正確的 <code>tolerations</code> 設定，很可能使得在預期進行替換的節點中，仍持續調度應用程式到節點上。可以透過修正對應部署的設定解決這項問題：</p>
+
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  ...
+  template:
+    ...
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+      tolerations: &lt;---- 修正設定
+        - operator: "Exists"
+    ...
+</code></pre>
+
+<h3 id="採用強制更新-force-update">採用強制更新 (Force update)</h3>
+
+<p>預設情況下，EKS Managed Node Group 的升級會採用 Rolling update (滾動更新) 方法，這個選項在升級過程會遵守 Pod Disruption Budget (PDB) 設定。若因為 PDB 導致無法正確停用，升級過程將會失敗。</p>
+
+<p>如果因為前述 PDB 或其他原因無法正確升級，也可以透過在升級過程選擇 Force update (強制更新) 進行升級，這個選項會在升級過程忽略 PDB 設定。無論 PDB 問題是否出現，都會強制節點重新啟動以進行更新。</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-force-update-option.png" alt="" /></p>
+
+<p>以下為使用 AWS CLI 的範例：</p>
+
+<pre><code class="language-bash">$ aws eks update-nodegroup-version --cluster-name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt; --force
+</code></pre>
+
+<p>以下為使用 eksctl 的範例：</p>
+
+<pre><code class="language-bash">$ eksctl upgrade nodegroup --cluster &lt;CLUSTER_NAME&gt; --name &lt;NODE_GROUP_NAME&gt; --force-upgrade
+</code></pre>
+
+<h2 id="總結">總結</h2>
+
+<p>在這篇內容中，我們提到了升級 EKS Managed Node Group 時遇到 <code>PodEvictionFailure</code> 錯誤的常見情境和發生原因，並且提出相關的解決方法，例如：</p>
+
+<ul>
+  <li>檢查 PodDisruptionBudget (PDB) 設定是否有誤，如果是 PDB 導致升級失敗，可以修改或是移除 PDB 後再次執行升級。</li>
+  <li>檢查 Tolerations 設定是否有誤。錯誤的 Tolerations 設定很可能使得在預期進行替換的節點中，仍持續調度應用程式到節點上，需修正對應部署的設定。</li>
+</ul>
+
+<p>最後，如果以上方法仍無法解決問題，可以採用強制更新 (Force update) 進行升級。此選項會在升級過程中忽略 PDB 設定，並強制節點重新啟動以進行更新<sup id="fnref:troubleshoot-nodegroup-update-failures" role="doc-noteref"><a href="#fn:troubleshoot-nodegroup-update-failures" class="footnote" rel="footnote">6</a></sup> <sup id="fnref:eks-managed-node-group-update-issue" role="doc-noteref"><a href="#fn:eks-managed-node-group-update-issue" class="footnote" rel="footnote">7</a></sup>。</p>
+
+<p>透過遵循上述的解決方法和相關步驟，希望能幫助在閱讀這篇內容的你更有方向的排查並且解決這個錯誤。</p>
+
+<h2 id="參考資源">參考資源</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:eks-managed-nodegroup" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/blogs/containers/eks-managed-node-groups/">Extending the EKS API: Managed Node Groups</a> <a href="#fnref:eks-managed-nodegroup" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-nodegroup-update-behavior" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/managed-node-update-behavior.html#managed-node-update-scale-up">Managed node update behavior - Scale up phase</a> <a href="#fnref:eks-managed-nodegroup-update-behavior" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:pdb" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/workloads/pods/disruptions/#pod-disruption-budgets">Kubernetes Documentation - Pod disruption budgets</a> <a href="#fnref:pdb" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubectl-drain" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/">Kubernetes Documentation - Safely Drain a Node</a> <a href="#fnref:kubectl-drain" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-taints-tolerations" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/">Kubernetes Documentation - Taints and Tolerations</a> <a href="#fnref:k8s-taints-tolerations" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:troubleshoot-nodegroup-update-failures" role="doc-endnote">
+      <p><a href="https://repost.aws/knowledge-center/eks-node-group-update-failures">How do I troubleshoot common issues with Amazon EKS node group update failures?</a> <a href="#fnref:troubleshoot-nodegroup-update-failures" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-node-group-update-issue" role="doc-endnote">
+      <p><a href="https://repost.aws/knowledge-center/eks-managed-node-group-update">How can I troubleshoot managed node group update issues for Amazon EKS?</a> <a href="#fnref:eks-managed-node-group-update-issue" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Kubernetes Service (EKS)" /><category term="Kubernetes" /><summary type="html"><![CDATA[自上篇提及 2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) 1 和簡介 Ec2SubnetInvalidConfiguration 的錯誤排查後，本篇內容將進一步探討在執行 Managed Node Group 升級過程遭遇的 PodEvictionFailure 錯誤。 Extending the EKS API: Managed Node Groups &#8617;]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="tw"><title type="html">解析美國國安局 (NSA) 和 CISA 釋出的 Kubernetes 強化指南</title><link href="https://easontechtalk.com/tw/nsa-kubernetes-hardening-guide/" rel="alternate" type="text/html" title="解析美國國安局 (NSA) 和 CISA 釋出的 Kubernetes 強化指南" /><published>2023-06-01T00:00:00+00:00</published><updated>2023-06-01T00:00:00+00:00</updated><id>https://easontechtalk.com/nsa-kubernetes-hardening-guide</id><content type="html" xml:base="https://easontechtalk.com/nsa-kubernetes-hardening-guide/"><![CDATA[<p>Kubernetes 作為容器化調度平台已經逐漸在許多企業和生產環境中屬於不可或缺的基礎建設一部分。然而，由於其複雜性，Kubernetes 的執行環境也面臨著許多安全挑戰和潛在的問題。美國國安局（NSA）與網路安全暨基礎架構安全署（CISA）在 2022 年釋出了一份名為 Kubernetes Hardening Guidance 的網路安全報告 <sup id="fnref:nsa-cisa-press" role="doc-noteref"><a href="#fn:nsa-cisa-press" class="footnote" rel="footnote">1</a></sup> (完整文件 <sup id="fnref:k8s-hardening-guide" role="doc-noteref"><a href="#fn:k8s-hardening-guide" class="footnote" rel="footnote">2</a></sup>)。作為強化 Kubernetes 指南，指南中除了旨在為 NSA、CISA 以及對於美國聯邦和公家機關作為運行 Kubernetes 集群關鍵基礎建設的相關強化方針，更詳述了 Kubernetes 環境潛藏的安全威脅，並提供了相關設定指引，以盡可能地降低其安全風險。對於 Kubernetes 管理者來說，該指南實則一份十分有用的參考資源。</p>
+
+<h2 id="提供-kubernetes-強化指南的目的">提供 Kubernetes 強化指南的目的</h2>
+
+<p>這份指南的目旨在提供使用 Kubernetes 時的最佳安全實踐，從而降低其面臨的風險。在這份文件中，提及了各種主題，從身份驗證、授權、網路安全以及監控策略，並提供了一些有用的工具和技術，以加強 Kubernetes Cluster 的安全措施。</p>
+
+<h2 id="這份指南在說什麼">這份指南在說什麼？</h2>
+
+<p>在閱讀這份文件後，可以注意到文件的概覽部分直接提及了整份文件圍繞的核心安全性議題，並且由後續數十頁的內容，具體描述了如何設置和保護 Kubernetes 環境以及相關涉及的安全問題。在這份內容中，不但從集群系統管理員 (Cluster Admininstrator)，也從系統開發人員的角度切入，提出相關的設定建議以避免常見的配置錯誤，並且涵蓋了相關的實踐、緩解和強化措施，主要包含：</p>
+
+<ul>
+  <li>掃描容器和 Pod 以查找漏洞或設定錯誤</li>
+  <li>使用最少的權限運行容器和 Pod</li>
+  <li>使用網路隔離政策 (Network Policy) 來控制威脅的影響範圍</li>
+  <li>使用防火牆限制不必要的網絡連接，並使用加密保護機密性</li>
+  <li>使用健全的身份驗證和授權機制來限制用戶和管理員訪問，以及限制可能的攻擊範圍</li>
+  <li>紀錄和審視活動日誌 (Audit Log)，以便及時發現潛在的惡意活動</li>
+  <li>定期審查所有 Kubernetes 的設定，並使用漏洞掃描工具確保風險得到適當的處理，並定期規劃升級</li>
+</ul>
+
+<h2 id="kubernetes-強化指南的主要內容">Kubernetes 強化指南的主要內容</h2>
+
+<p>這份指南主要分為三部分：授權和身份驗證、網絡安全和監控</p>
+
+<h3 id="授權和身份驗證-authentication-and-authorization">授權和身份驗證 (Authentication and authorization)</h3>
+
+<p>授權和身份驗證是保護 Kubernetes 環境的第一步。在這一部分中，指南介紹了一些最佳實踐，包括使用適當的身份驗證方法、限制對 Kubernetes API 的訪問權限和使用適當的角色和權限。常見的設定策略為 Kubernetes 本身的 Role-Based Access Control (RBAC)。</p>
+
+<p>透過多因素身份驗證（MFA）進行訪問保護 Kubernetes 環境。此外，對於權限的設定應遵循使用最小權限原則 (Least Privilege)，以最小化攻擊面。同時強調了使用適當的角色和權限的重要性 (Role-Based Access Control)，以限制對 Kubernetes API 的訪問。</p>
+
+<h3 id="網絡安全-network-separation-and-hardening">網絡安全 (Network separation and hardening)</h3>
+
+<p>在這一部分中，指南介紹了一些最佳實踐，包括使用網路隔離、限制對 Kubernetes 網絡的訪問權限和使用加密通信。</p>
+
+<p>在這份文件中，提及了數項建議以使用適當的網路策略，並限制 Pod 與 Pod 之間的通信。這份文件中也涵蓋了使用加密通信的相關建議，以保護敏感數據。</p>
+
+<h3 id="監控和威脅偵測-audit-logging-and-threat-detection">監控和威脅偵測 (Audit Logging and Threat Detection)</h3>
+
+<p>監控是保護 Kubernetes 環境的關鍵。在這一部分中，指南介紹了一些最佳實踐，包括使用適當的監控工具、關注重要的事件和警報並建立响应計劃。</p>
+
+<p>指南建議使用適當的監控工具，以監控 Kubernetes 環境的狀態和行為。同時，強調了建立响应計劃的必要性，以應對環境中的安全事件。指南提供了一些示例事件，以幫助企業更好地了解哪些事件可能對其環境造成風險。</p>
+
+<h2 id="kubernetes-集群可能的威脅和弱點分析-threat-model">Kubernetes 集群可能的威脅和弱點分析 (Threat Model)</h2>
+
+<p>隨著 Kubernetes 可以乘載的業務和運算量提高，有越來越多的應用程式和網路服務基於 Kubernetes 做為容器化調度基礎平台運行。在這種情況下，這也意味著運行在 Kubernetes Cluster 中的內容將可能包含許多企業和組織關鍵的資訊，使得 Kubernetes 逐漸成為攻擊者對於資料或計算能力需求盜竊的高價值目標。例如：除了作為 DDoS (拒絕服務攻擊) 的可能攻擊目標外，一種常見的攻擊手法用於部署惡意程式用於比特幣或是加密貨幣的挖掘。CrowdStrike 更同時於今年發佈一篇常見的攻擊手法，指出挖掘攻擊者將挖礦程式偽裝成 Pause Container 使管理者不易察覺<sup id="fnref:crowdstrike-cryptojacking-k8s-campaign" role="doc-noteref"><a href="#fn:crowdstrike-cryptojacking-k8s-campaign" class="footnote" rel="footnote">3</a></sup>。</p>
+
+<p>在這份文件中，針對現有 Kubernetes Cluster 進行威脅建模具體列出了最有可能遭受的一些威脅：</p>
+
+<ul>
+  <li>供應鏈 (Supply Chain)：上游和三方軟體供應鏈的攻擊向量多樣且難以緩解。這包括幫助提供最終產品的產品組件、服務、人員甚至風險還可能包括用於建立和管理 Kubernetes Cluster 的第三方軟件和供應商，影響包含多個層面：
+    <ul>
+      <li>容器/應用程序級別：由於在 Kubernetes 中可以運行和調度任一種應用程序和容器，這使得一部分的安全威脅非常依賴第三方安全性、開發人員的可信度和對於軟體本身的防禦。一個惡意的容器或應用部署在 Kubernetes 中均有可能造成安全威脅。</li>
+      <li>容器執行環境 (Container Runtime)：為了運行容器，在每個工作節點 (Node) 上都必須具備容器所需要的執行環境 (Container Runtime)，並且從映像 (Container Image) 來源的儲存位置中下載。Container Runtime 對於容器的生命週期起到關鍵的作用，包含監控系統資源、為容器隔離可用的系統資源。Container Runtime 和相關虛擬化技術本身的漏洞可能導致這項隔離失效，甚至使攻擊者能在系統上獲取更高的權限。</li>
+      <li>基礎設施：運行 Kubernetes 的基礎系統仍依賴底層硬件和韌體。任何系統層或是 Kubernetes master node 相關的的漏洞都可能為惡意攻擊提供立足點。</li>
+    </ul>
+  </li>
+  <li>惡意攻擊者：惡意攻擊者經常利用漏洞或從社交工程 (Social Engineering) 中竊取憑證並獲取權限。 Kubernetes 本身在架構中公開了數項 API，使得攻擊者可能進一步利用這些 API 進行惡意操作，包括：
+    <ul>
+      <li>Control Plane - Kubernetes 主節點 (Master Node) 有許多組件，若 API Server 並未適當的設定權限管理，攻擊者則可能任意地存取 Kubernetes Cluster 進行相關的惡意操作。</li>
+      <li>工作節點 (Node)：除了運行容器引擎外，工作節點通常也運行了 kubelet 和 kube-proxy 等重要服務，若這些服務本身存在漏洞，則可能會被駭客利用。</li>
+      <li>容器化應用程式：在 Cluster 內運行的應用程式是常見的攻擊目標。</li>
+    </ul>
+  </li>
+  <li>內部威脅：一種可能的也包跨來自內部人員的威脅。內部攻擊者可以利用在組織內工作時所給予的漏洞或特權進行非法訪問及操作。
+    <ul>
+      <li>集群管理員 (Administrator)：Kubernetes 集群管理員可以控制運行的容器、Pod，包括在容器化環境中執行任意命令。這部分可以透過 Kubernetes 本身支援的 RBAC 機制，通過限制對敏感功能的訪問，以減少可能的風險。但由於 Kubernetes 本身缺乏雙人完整性控制 (註：好比要開一道門需要兩把不同的鑰匙，這兩把鑰匙在不同人身上)。此外，管理員甚至也可以透過物理性的方法直接訪問系統本身或是虛擬化管理程序 (Hypervisor)，這都可能破壞 Kubernetes 執行環境。</li>
+      <li>用戶 (User)：容器化應用程式中的訪問用戶可能知道並擁有訪問 Kubernetes Cluster 中的容器化服務的憑證，取得這項憑證後，可能基於軟體本身的漏洞用於進階的攻擊。</li>
+      <li>雲端服務或基礎設施提供商  (Cloud Service Provider, CSP)：由於 Kubernetes Cluster 可能運行於其他服務提供商，CSP 經常需要具有多層技術和管理控制，以保護系統免受可能的威脅以及攻擊。</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="各對應層面的強化建議摘要">各對應層面的強化建議摘要</h2>
+
+<h3 id="kubernetes-pod-security">Kubernetes Pod Security</h3>
+
+<h4 id="運行非-root-權限身份的容器-non-root-containers">運行非 root 權限身份的容器 (“Non-root” containers)</h4>
+
+<p>預設情況下，由於容器本身屬於隔離執行環境，容器中的應用程式預設將使用 root 身份運行。在 Pod 安全性一節中，討論了以非 Root (Non-root) 用戶身份部署運行 Pod 執行環境的相關可能做法，並且在文件中提及一個 Dockerfile 的範例，透過相關命令在運行應用程式的同時，透過設定 Linux group 和用戶身份，採用非 root 用戶身份執行該進程 (process)。</p>
+
+<pre><code class="language-dockerfile">FROM ubuntu:latest
+
+#Update and install the make utility
+RUN apt update &amp;&amp; apt install -y make
+
+#Copy the source from a folder called “code” and build the application with
+the make utility
+COPY . /code
+RUN make /code
+
+#Create a new user (user1) and new group (group1); then switch into that
+user’s context
+RUN useradd user1 &amp;&amp; groupadd group1
+USER user1:group1
+
+#Set the default entrypoint for the container
+CMD /code/app
+</code></pre>
+
+<p>此外，Kubernetes 本身對於 Pod 部署提供了 <code>securityContext</code> 屬性，可用於設定 Pod 運行時採用非 Root 身份運作，例如：</p>
+
+<pre><code class="language-yaml">spec:
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+</code></pre>
+
+<h4 id="設定僅可讀的檔案系統-immutable-container-file-systems">設定僅可讀的檔案系統 (Immutable container file systems)</h4>
+
+<p>預設情況下，Pod 本身內的應用具備權限對容器中的檔案系統進行寫入操作，攻擊者將可以利用這項權限進行檔案建立、下載惡意程式碼甚至更改應用程式代碼等操作。在對於本身容器執行環境的檔案系統屬於僅讀取的使用情境，Kubernetes 管理者可以為 Pod 本身設定為僅可讀取，並透過掛載 Volume (emptyDir<sup id="fnref:emptyDir" role="doc-noteref"><a href="#fn:emptyDir" class="footnote" rel="footnote">4</a></sup>) 將寫入操作限制於用於暫存空間 (可為檔案系統或是記憶體: tmpfs)，並在容器終止後自動清除，以提高安全性。</p>
+
+<pre><code class="language-yaml">spec:
+  containers:
+  - command: ["sleep"]
+    args: ["999"]
+    image: ubuntu:latest
+    name: web
+    securityContext:
+        readOnlyRootFilesystem: true
+    volumeMounts:
+        - mountPath: /writeable/location/here
+          name: volName
+    volumes:
+        - emptyDir: {}
+          name: volName
+</code></pre>
+
+<h4 id="建立安全的容器映像-building-secure-container-images">建立安全的容器映像 (Building secure container images)</h4>
+
+<p>一種常見為建立安全的容器映像策略，通常是在映像 CI/CD 建置和推送過程中，增加 Image scanning 和弱點掃描的工作，例如：檢查是否使用過期的程式函式庫、依賴套件、設定和配置問題、不當的權限和開放端口 (Port) 設定、可能的弱點及 CVEs 等。然而，在這份文件中也同時分享了一個採用 Kubernetes 原生的功能和 Adminission Webhook 機制在容器部署的同時觸發相關的掃描工作 ，並且提供更為全面和彈性的安全性偵測機制和參考架構，主動阻斷任何非法的映象部署，甚至在 Webhook 設計中阻止不合規的 Pod 部署設定 (例如：部署 Privilege Container)。</p>
+
+<p><img src="/assets/images/2023/nsa-kubernetes-hardening-guide/secure-container-image-build-workflow.png" alt="" />
+(圖片來源：Kubernetes Hardening Guidance)</p>
+
+<h4 id="其他">其他</h4>
+
+<p>以下是在該章節中中列舉有關 Pod 安全性的其他建議：</p>
+
+<ul>
+  <li>
+    <p>增強 Pod 安全性：常見的策略為套用 Pod Security Policies (PSPs - 在季芹的 Kubernetes 版本中已經棄用)、Kubernetes 1.23 開始預設採用的 Pod Security Admission 等</p>
+  </li>
+  <li>
+    <p>保護 Pod Service Account Token：針對不需要存取 Pod Service Account Token 的執行環境關閉設定 Service Account Token 的掛載 (automountServiceAccountToken: false)</p>
+  </li>
+  <li>
+    <p>在系統層強化容器執行和虛擬化環境安全：例如啟用 Kernel 本身支持的 seccomp、Hypervisor 本身支持的安全虛擬化技術運行容器執行環境等</p>
+  </li>
+</ul>
+
+<h3 id="網路隔離和強化-network-separation-isolation-and-hardening">網路隔離和強化 (Network separation (isolation) and hardening)</h3>
+
+<p>Kubernetes 網路安全性是非常重要的一環，透過對於 Kubernetes 中各個網路元件的隔離和強化，可以大幅降低網路攻擊的風險，以下在這個章節中主要提及可採用的措施：</p>
+
+<h4 id="網路隔離">網路隔離</h4>
+
+<p>Kuberentes 支持的 <code>NetworkPolicy</code> 來設定 Pod 之間的網路存取規則，並且限制網路存取來源和目的地，以減少攻擊風險。要設定 Network Policy 之前，通常需要透過將應用部署在不同的 Kubernetes <code>Namespaces</code> 實現進一步的隔離，並且也需要確保使用的 CNI (Container Network Interface) Plugin 對於 <code>NetworkPolicy</code> 支援<sup id="fnref:network-policies" role="doc-noteref"><a href="#fn:network-policies" class="footnote" rel="footnote">5</a></sup>。</p>
+
+<pre><code class="language-yaml">apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: example-access-nginx
+  namespace: &lt;NAMESPACE_NAME&gt;
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx
+  ingress:
+  - from:
+    - podSelector:
+      matchLabels:
+        access: "true"
+</code></pre>
+
+<h4 id="設定資源使用政策">設定資源使用政策</h4>
+
+<p>Kubernetes 支援使用 <code>LimitRanges</code><sup id="fnref:limit-ranges" role="doc-noteref"><a href="#fn:limit-ranges" class="footnote" rel="footnote">6</a></sup> (用於單一 Namespace 中限制個別 Pod、Container 可使用的資源數量)、<code>ResourceQuotas</code><sup id="fnref:resource-quotas" role="doc-noteref"><a href="#fn:resource-quotas" class="footnote" rel="footnote">7</a></sup> (可用於限制在 Namespace 中總體可以使用的 CPU、Memory、儲存資源，甚至是限制物件數量，例如只能運行多少個 Pod) 和 <code>Process ID (PID)</code> <sup id="fnref:pid-limit" role="doc-noteref"><a href="#fn:pid-limit" class="footnote" rel="footnote">8</a></sup> 限制等方法針對特定 Kubernetes Namespace、Node 或是 Pod 達到控制可用資源的目的。</p>
+
+<pre><code class="language-yaml">apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cpu-min-max-demo-lr
+spec:
+  limits
+  - default:
+      cpu: 1
+    defaultRequest:
+      cpu: 0.5
+    max:
+      cpu: 2
+    min:
+      cpu 0.5
+    type: Container
+</code></pre>
+
+<p>另外一個文件沒提的是，Kubernetes Pod 本身部署也同時支持相關的資源限制設定，例如：</p>
+
+<pre><code class="language-yaml">apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend
+spec:
+  containers:
+  - name: app
+    image: images.my-company.example/app:v4
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "250m"
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+</code></pre>
+
+<h4 id="控制平面強化-control-plane-hardening">控制平面強化 (Control Plane Hardening)</h4>
+
+<p>在這一節中主要討論了幾項針對 Kubernetes Master Node 相關的強化討論，包含：</p>
+
+<ul>
+  <li>
+    <p>啟用 API Server 訪問控制：透過 API Server 的 Role-Based Access Control (RBAC) 機制，可以設定哪些使用者或群組可以訪問 API Server，並且限制訪問權限，以減少不合法的 API Server 請求。</p>
+  </li>
+  <li>
+    <p>網路加密：透過 HTTPS/TLS 或是其他網路加密方式。由於 etcd 屬於整個 Kubernetes Cluster 最關鍵的元件，因此也包含為 etcd 以及 API Server 之間的傳輸啟用加密技術。除了可以增加網路傳輸的安全性，更減少被竊聽或攻擊的風險。</p>
+  </li>
+  <li>
+    <p>避免將 Kbuernetes API Server 暴露於網路上：API Server 預設使用了 6443 (有些使用 443)，應對於這些相關的端口 (Port) 進行強化甚至加上關聯的安全組規則，包含：</p>
+
+    <ul>
+      <li><code>2379-2380</code>: etcd server client API</li>
+      <li><code>10250</code>: kubelet API</li>
+      <li><code>10259</code>: kube-scheduler</li>
+      <li><code>10257</code>: kube-controller-manager</li>
+      <li><code>30000-32767</code>: Ports that may be opened on a Worker Node when using NodePort</li>
+    </ul>
+  </li>
+  <li>
+    <p>針對 Secret 物件的加密：預設情況下，Kubernetes Secret 本身屬於未加密的 base64 編碼字串，任何具備 Kubernetes API 操作權限的人均有機會可以獲取到相關的敏感資訊。因此，可以透過三方的加密服務為 Secret 寫入 etcd 時進行加密 (例如：AWS Key Management Service, KMS)、為 API Server 去啟動參數中增加 <code>--encryption-provider-config</code> 設定加密提供服務 <sup id="fnref:kms-encryption" role="doc-noteref"><a href="#fn:kms-encryption" class="footnote" rel="footnote">9</a></sup> 等來增加 Kubernetes Secret 的安全性。</p>
+  </li>
+</ul>
+
+<h4 id="保護敏感的雲端服務基礎建設資訊-protecting-sensitive-cloud-infrastructure">保護敏感的雲端服務基礎建設資訊 (Protecting sensitive cloud infrastructure)</h4>
+
+<p>許多組織會選擇將 Kubernetes 運行在雲端服務提供商的執行環境中，管理者可以，例如：以 AWS 為例，可以透過設定 EC2 本身的屬性封鎖 EC2 Metadata Service (IMDS) 的存取權限並且阻擋獲取可能的憑證 (EC2 Instance IAM Role)。例如：以下是文件中沒有提及使用 EC2 本身支持的設定或是透過 <code>NetworkPolicy</code> 實現。</p>
+
+<p>(AWS CLI)</p>
+<pre><code class="language-bash">aws ec2 modify-instance-metadata-options --instance-id &lt;value&gt; --http-tokens required --http-put-response-hop-limit 1
+</code></pre>
+
+<p>(NetworkPolicy)</p>
+<pre><code class="language-yaml">apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-metadata-access
+  namespace: example
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 169.254.169.254/32
+</code></pre>
+
+<h3 id="授權和身份驗證-authentication-and-authorization-1">授權和身份驗證 (Authentication and authorization)</h3>
+
+<p>授權和身份驗證是保護 Kubernetes 環境的重要一環，在這一章節，指南介紹了一些最佳實踐，包括使用適當的身份驗證方法、限制對 Kubernetes API 的訪問權限和使用適當的角色和權限。但主要圍繞為 Kubernetes 本身的 Role-Based Access Control (RBAC) 設定以保護 Kubernetes 執行環境。例如：設定一個僅對於 Pod 可讀取的 Role 身份。</p>
+
+<pre><code class="language-yaml">apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: your-namespace-name
+  name: pod-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "list"]
+</code></pre>
+
+<p>要啟用這項設定，kube-apiserver 必須使用必要的參數 (<code>--authorization-mode=RBAC</code>) 以支援該方法。</p>
+
+<h2 id="總結-kubernetes-hardening-guide">總結 Kubernetes Hardening Guide</h2>
+
+<p>作為本篇內容的總結，以下是這份文件中對於每個部分的主要建議摘要：</p>
+
+<ul>
+  <li>Kubernetes Pod 安全
+    <ul>
+      <li>運行非 root 權限身份的容器 (“Non-root” containers)</li>
+      <li>設定僅可讀的檔案系統 (Immutable container file systems) 運行容器</li>
+      <li>建立及掃描容器映像以找出可能的漏洞或設定錯誤</li>
+      <li>使用相關技術和功能控制可能的安全性威脅，包括：
+        <ul>
+          <li>防止運行 Privileged Container 容器</li>
+          <li>降量避免頻繁使用較不安全的功能和選項，例如 hostPID、hostIPC、hostNetwork、allowedHostPath</li>
+          <li>透過 RunAsUser 屬性避免以 root 用戶運行應用</li>
+          <li>在系統層可以考慮啟用安全功能（例如： SELinux、AppArmor 和 seccomp)</li>
+        </ul>
+      </li>
+    </ul>
+  </li>
+  <li>網路隔離和強化
+    <ul>
+      <li>使用防火牆和基於角色的訪問控制（RBAC）限制對控制平面節點的訪問，並考慮在控制平面組件和節點之間使用單獨的網絡</li>
+      <li>限制對 etcd 的訪問</li>
+      <li>配置控制平面組件使用通過傳輸層安全性（TLS）憑證進行身份驗證、加密通信，包含將 etcd 加密並使用 TLS 協議通信</li>
+      <li>考慮設定 NetworkPolicy 以隔離資源，並設定明確的網路安全性策略 (NetworkPolicy)</li>
+      <li>將所有憑證和敏感信息加密存放在 Kubernetes Secrets 中，而不是在配置文件中。考慮啟用 KMS 等服務加密 Kubernetes Secrets 資源</li>
+    </ul>
+  </li>
+  <li>認證和授權
+    <ul>
+      <li>禁用匿名用戶直接訪問和操作 Kubernetes API Server（預設啟用）</li>
+      <li>啟用 RBAC，並為用戶、管理員、開發人員、Service Account 等建立個別身份的 RBAC 策略。</li>
+    </ul>
+  </li>
+  <li>記錄檔和威脅檢測
+    <ul>
+      <li>為 API Server 啟用 Audit log 操作記錄檔（預設為關閉），並為 Kubernetes 事件紀錄以進行查閱和追蹤</li>
+      <li>為應用和容器設定一致性的日誌收集、監控和警報系統</li>
+    </ul>
+  </li>
+  <li>升級和應用程序安全最佳實踐
+    <ul>
+      <li>即時更新 Kubernetes 版本和安全漏洞</li>
+      <li>定期進行漏洞掃描和渗透测试</li>
+      <li>從環境中移除和刪除未使用的元件、部署</li>
+    </ul>
+  </li>
+</ul>
+
+<p>總的來說，在閱讀完 NSA 和 CISA 釋出的這份 Kubernetes Hardening Guide，我更感覺像是在重新複習一次 Kubernetes 本身對於安全性功能的支援，我認為作為一份 Security Checklist 再好不過，且的確是一份非常值得參考的文件。</p>
+
+<p>當然，在很多實際應用中，Kubernetes 的部署和安全性都可能基於組織文化，甚至任何非人為可控制因素，使得無法針對所有的威脅進行一一的強化，但身為 Kubernetes 管理者，通過學習並且逐步實施這些最佳實踐，某種程度上能夠更好保護 Kubernetes 的執行環境，減少面臨的可能安全性風險，同時建立一個持續改進的安全計劃和引導組織文化提升，以應對不斷變化的安全性威脅。</p>
+
+<h2 id="參考資源">參考資源</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:nsa-cisa-press" role="doc-endnote">
+      <p><a href="https://www.nsa.gov/Press-Room/News-Highlights/Article/Article/2716980/nsa-cisa-release-kubernetes-hardening-guidance/">NSA, CISA release Kubernetes Hardening Guidance release Kubernetes Hardening Guidance</a> <a href="#fnref:nsa-cisa-press" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-hardening-guide" role="doc-endnote">
+      <p><a href="https://media.defense.gov/2022/Aug/29/2003066362/-1/-1/0/CTR_KUBERNETES_HARDENING_GUIDANCE_1.2_20220829.PDF">Kubernetes Hardening Guidance</a> (August 2022). <a href="#fnref:k8s-hardening-guide" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:crowdstrike-cryptojacking-k8s-campaign" role="doc-endnote">
+      <p><a href="https://www.crowdstrike.com/blog/crowdstrike-discovers-first-ever-dero-cryptojacking-campaign-targeting-kubernetes/">CrowdStrike Discovers First-Ever Dero Cryptojacking Campaign Targeting Kubernetes</a> <a href="#fnref:crowdstrike-cryptojacking-k8s-campaign" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:emptyDir" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/storage/volumes/#emptydir">Kubernetes Documentation - emptyDir</a> <a href="#fnref:emptyDir" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:network-policies" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/services-networking/network-policies/">Kubernetes Documentation - Network Policies</a> <a href="#fnref:network-policies" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:limit-ranges" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/policy/limit-range/">Kubernetes Documentation - Limit Ranges</a> <a href="#fnref:limit-ranges" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:resource-quotas" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/policy/resource-quotas/">Kubernetes Documentation - Resource Quotas</a> <a href="#fnref:resource-quotas" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:pid-limit" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/policy/pid-limiting/">Kubernetes Documentation - Process ID Limits And Reservations</a> <a href="#fnref:pid-limit" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kms-encryption" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/tasks/administer-cluster/kms-provider/#encrypting-your-data-with-the-kms-provider">Kubernetes Documentation - Using a KMS provider for data encryption</a> <a href="#fnref:kms-encryption" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Kubernetes" /><category term="Security" /><summary type="html"><![CDATA[Kubernetes 作為容器化調度平台已經逐漸在許多企業和生產環境中屬於不可或缺的基礎建設一部分。然而，由於其複雜性，Kubernetes 的執行環境也面臨著許多安全挑戰和潛在的問題。美國國安局（NSA）與網路安全暨基礎架構安全署（CISA）在 2022 年釋出了一份名為 Kubernetes Hardening Guidance 的網路安全報告 1 (完整文件 2)。作為強化 Kubernetes 指南，指南中除了旨在為 NSA、CISA 以及對於美國聯邦和公家機關作為運行 Kubernetes 集群關鍵基礎建設的相關強化方針，更詳述了 Kubernetes 環境潛藏的安全威脅，並提供了相關設定指引，以盡可能地降低其安全風險。對於 Kubernetes 管理者來說，該指南實則一份十分有用的參考資源。 NSA, CISA release Kubernetes Hardening Guidance release Kubernetes Hardening Guidance &#8617; Kubernetes Hardening Guidance (August 2022). &#8617;]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2023/nsa-kubernetes-hardening-guide/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2023/nsa-kubernetes-hardening-guide/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="tw"><title type="html">怦然心動的功能性更新：Amazon ECS 終於支援任務定義 (Task Definition) 刪除</title><link href="https://easontechtalk.com/tw/ecs-support-task-definition-deletion/" rel="alternate" type="text/html" title="怦然心動的功能性更新：Amazon ECS 終於支援任務定義 (Task Definition) 刪除" /><published>2023-03-10T00:00:00+00:00</published><updated>2023-03-10T00:00:00+00:00</updated><id>https://easontechtalk.com/ecs-support-task-definition-deletion</id><content type="html" xml:base="https://easontechtalk.com/ecs-support-task-definition-deletion/"><![CDATA[<p>自 2015 年 Amazon ECS 正式釋出，提供了支援在 AWS 上運行容器工作負載的成熟解決方案。然而，僅支援 DeregisterTaskDefinition API<sup id="fnref:DeregisterTaskDefinition-API" role="doc-noteref"><a href="#fn:DeregisterTaskDefinition-API" class="footnote" rel="footnote">1</a></sup> 可以取消註冊特定的任務定義 (Task Definition) 版本。</p>
+
+<p>但是，在這樣的設計下，不免會遇到需要刪除過時或未使用的任務定義 (Task Definition) 的情況。即使過了多年，Amazon ECS 仍不支持刪除任務定義 (Task Definition) 資源，這讓許多 Amazon ECS 使用者想知道究竟什麼時候 ECS 才會支任務定義 (Task Definition) 的刪除功能。<sup id="fnref:ecs-fr-685" role="doc-noteref"><a href="#fn:ecs-fr-685" class="footnote" rel="footnote">2</a></sup></p>
+
+<p>千呼萬盼，Amazon ECS 終於支持對任務定義 (Task Definition) 刪除功能。</p>
+
+<h2 id="有哪些改變">有哪些改變？</h2>
+
+<p>2023 年 2 月 27 日，Amazon ECS 正式宣布支援刪除未使用 (<code>INACTIVE</code>) 狀態的任務定義版本 (Task Definition Revisions)。<sup id="fnref:whats-new-ecs-task-definition-deletion" role="doc-noteref"><a href="#fn:whats-new-ecs-task-definition-deletion" class="footnote" rel="footnote">3</a></sup></p>
+
+<p>使用 ECS 並且當你建立一個任務定義 (Task Definition) 時，每次都會自動為其建立一個新版本 (例如：<code>myTaskDefinition:1</code>, <code>myTaskDefinition:2</code> … 等)。每個版本都是不可變更，這意味著，一旦該資源被建立，它就不能被刪除或修改。即使你爲任務定義 (Task Definition) 刪除所有的版本 (Revision)，也只是將版本的狀態由 <code>ACTIVE</code> 更改為 <code>INACTIVE</code>，該版本仍然存在，並且在 AWS 帳號中仍然可以被檢視。</p>
+
+<p>在這個功能被支援之前，使用者只能將任務定義版本 (Task Definition Revision) 標記為 <code>INACTIVE</code>，但無法刪除。</p>
+
+<p>現在這項功能改進可以讓你通過 Amazon ECS 控制台或通過編寫程式的方式刪除未使用的任務定義版本 (Task Definition Revision)。可以永久刪除不再需要或包含不需要的配置的任務定義版本 (Task Definition Revision)，簡化了資源管理並改善了安全問題。</p>
+
+<p><img src="/assets/images/2023/ecs-support-task-definition-deletion/ecs-console-deletion-option.png" alt="Task definition deletion option" /></p>
+
+<h2 id="為什麼能刪任務定義-task-definition-這麼重要">為什麼能刪任務定義 (Task Definition) 這麼重要？</h2>
+
+<p>一種常見的場景即為當容器程式於運行階段存在需要存取特定資訊、憑證或是密文資訊時，常使用環境變數做為參數傳遞 (例如：連接到特定的資料庫)。</p>
+
+<p>透過環境變數將您的憑證傳遞給容器時，如果沒有意識到任務定義 (Task Definition) 不會被刪除，可能會使得你意外地將帳號密碼留在可讀的資源中，暴露不必要的安全風險。例如：</p>
+
+<pre><code class="language-json">{
+    "family": "",
+    "containerDefinitions": [
+        {
+            "name": "",
+            "image": "mysql",
+            ...
+            "environment": [
+                {
+                    "name": "MYSQL_ROOT_PASSWORD",
+                    "value": "mySecretPassword"
+                }
+            ],
+            ...
+        }
+    ],
+    ...
+}
+</code></pre>
+
+<p>在過去，任務定義 (Task Definition) 僅能設定為 <code>INACTIVE</code> 狀態，並且無法刪除。</p>
+
+<p>如果帳號中的任一 IAM User 或 IAM Role 具有描述任務定義 (Task Definition) 的權限，則他們就可以查看你可能不希望他們訪問的憑證數據。</p>
+
+<pre><code class="language-bash">$ aws ecs describe-task-definition --task-definition myTaskDefinition:2
+
+{
+    "taskDefinition": {
+        "containerDefinitions": [
+            {
+                "name": "web-service",
+                "environment": [
+                    {
+                        "name": "MYSQL_ROOT_PASSWORD",
+                        "value": "mySecretPassword"
+                    }
+                ],
+                ...
+            }
+        ],
+        "family": "myTaskDefinition",
+        "revision": 2,
+        "status": "INACTIVE",
+        ...
+}
+</code></pre>
+
+<p>由於任務定義 (Task Definition) 可能會在 <code>INACTIVE</code> 狀態下洩露敏感細節，因此，針對這項問題，通常建議使用 AWS Secrets Manager 或 AWS Systems Manager Parameter Store，這兩個 AWS 服務都支援將敏感資訊注入到容器環境變數中而不會直接地被看到相關的敏感資訊。</p>
+
+<p>但現在，無論你是否有使用 AWS Secrets Manager 或 AWS Systems Manager Parameter Store 存放這些敏感資訊，你都可以在 AWS 控制台上永久刪除任務定義 (Task Definition)，或是使用 DeleteTaskDefinitions <sup id="fnref:DeleteTaskDefinitions-API" role="doc-noteref"><a href="#fn:DeleteTaskDefinitions-API" class="footnote" rel="footnote">4</a></sup> API 以程式方法呼叫或是採用 AWS CLI 命令執行刪除：</p>
+
+<pre><code>$ aws ecs delete-task-definitions --task-definitions &lt;task name:revision&gt;
+</code></pre>
+
+<h2 id="總結">總結</h2>
+
+<p>在 Amazon ECS 釋出的 8 年後，ECS 終於支援任務定義 (Task Definition) 刪除功能，不必再煩惱看到一堆 <code>INACTIVE</code> 狀態的資源以及不小心暴露憑證資訊的安全性風險。</p>
+
+<p>多麽讓人怦然心動的功能性更新！</p>
+
+<h2 id="參考資源">參考資源</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:DeregisterTaskDefinition-API" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DeregisterTaskDefinition.html">Amazon ECS API - DeregisterTaskDefinition</a> <a href="#fnref:DeregisterTaskDefinition-API" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:ecs-fr-685" role="doc-endnote">
+      <p><a href="https://github.com/aws/containers-roadmap/issues/685">[ECS] [request]: Delete task definitions #685</a> <a href="#fnref:ecs-fr-685" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:whats-new-ecs-task-definition-deletion" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/about-aws/whats-new/2023/02/amazon-ecs-deletion-inactive-task-definition-revisions/">Amazon ECS now supports deletion of inactive task definition revisions</a> <a href="#fnref:whats-new-ecs-task-definition-deletion" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:DeleteTaskDefinitions-API" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DeleteTaskDefinitions.html">Amazon ECS API - DeleteTaskDefinitions</a> <a href="#fnref:DeleteTaskDefinitions-API" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Container Service (ECS)" /><category term="Container" /><summary type="html"><![CDATA[自 2015 年 Amazon ECS 正式釋出，提供了支援在 AWS 上運行容器工作負載的成熟解決方案。然而，僅支援 DeregisterTaskDefinition API1 可以取消註冊特定的任務定義 (Task Definition) 版本。 Amazon ECS API - DeregisterTaskDefinition &#8617;]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2023/ecs-support-task-definition-deletion/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2023/ecs-support-task-definition-deletion/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry xml:lang="tw"><title type="html">Amazon ECS Bottlerocket 簡介: 在 Bottlerocket 上運行容器和任務 (Task)</title><link href="https://easontechtalk.com/tw/launch-ecs-task-with-bottlerocket/" rel="alternate" type="text/html" title="Amazon ECS Bottlerocket 簡介: 在 Bottlerocket 上運行容器和任務 (Task)" /><published>2023-03-01T00:00:00+00:00</published><updated>2023-03-01T00:00:00+00:00</updated><id>https://easontechtalk.com/launch-ecs-task-with-bottlerocket</id><content type="html" xml:base="https://easontechtalk.com/launch-ecs-task-with-bottlerocket/"><![CDATA[<p>Amazon Elastic Container Service (ECS) 是用於管理在 Amazon Web Services (AWS) 上以容器化方式運行的容器調度服務。類似於 Kubernetes、Docker Swarm 等集成方案，Amazon ECS 提供了一種簡單的功能性來幫助你啟動和擴展容器化應用程式，這樣簡單的特性使得 ECS 成為許多企業用戶快速且有效部署其容器應用程式的理想選擇。</p>
+
+<p>Bottlerocket 則是由 AWS 釋出以 Linux 為基礎的一個新的開源作業系統，專為運行容器而設計。在本篇內容，我們將延伸簡介如何在 Amazon ECS 使用 Bottlerocket 作業系統啟動容器任務 (Task)。</p>
+
+<h2 id="簡介">簡介</h2>
+
+<h3 id="amazon-ecs-bottlerocket-概覽">Amazon ECS Bottlerocket 概覽</h3>
+
+<p>Bottlerocket 旨在提供安全且高效、適用於運行容器執行環境優化的作業系統。提供一個輕量、不可任意修改且易於更新的作業系統，以適合大規模運行容器工作負載時使用。通過在 Amazon ECS 中使用 Bottlerocket，由於他僅提供最基本所有運行容器環境的執行需求，最主要的優化將是減少系統和容器啟動的時間。</p>
+
+<h3 id="使用-bottlerocket-和-amazon-ecs-的好處-與一般的-ecs-optimized-ami-的區別">使用 Bottlerocket 和 Amazon ECS 的好處 (與一般的 ECS-optimized AMI 的區別)</h3>
+
+<p>最主要區別在於 Bottlerocket 以安全及輕量為宗旨設計，因此，如果你是第一次使用，通常會注意到一些顯著的安全性功能差異。例如以下是在使用該 Bottlerocket 時需要知道的一些注意事項:</p>
+
+<ul>
+  <li>Bottlerocket 的檔案系統 (Root filesystem) 被是唯讀 (Read-only)，不能被 User space 的應用程式 (一般的 process) 直接修改。</li>
+  <li>預設並沒有開啟 SSH 功能，除非有設定，否則無法直接 SSH 運行 Bottlerocket 的環境中。</li>
+</ul>
+
+<h2 id="開始使用-bottlerocket">開始使用 Bottlerocket</h2>
+
+<p>接下來就讓我們來看看如何著手運行第一個以 Bottlerocket 為執行基礎的容器部署環境。</p>
+
+<h3 id="建立-task-definition">建立 Task definition</h3>
+
+<p>要使用 Amazon ECS 和 Bottlerocket 啟動容器應用，首先，你會需要先建立一個任務定義 (Task definition)，這個 Task definition 用於描述容器化應用程式 (包含：Image、CPU、Memory 等規格)。</p>
+
+<p>如果您過去使用過並且已經熟悉 Amazon ECS，則在 Task definition 的建立過程中與使用一般的 ECS-optimized AMI 沒有區別，運行於 Bottlerocket 環境中通常並不需要做任何修改。如果您已經有 Task definition，則可以跳過到下一部分。</p>
+
+<p>任務定義 (Task definition) 可以視為一個在 Amazon ECS 上運行你容器藍圖，用於描述容器規格和運行方式。在 Amazon ECS 上，容器應該被封裝為運行單元，稱為任務 (<strong>Task</strong>)，這就是為什麼我們需要有一個任務定義 (<strong>Task definition</strong>) 的原因。在任務定義 (Task definition) 中，您可以指定應用程式需要運行的 Image、資源、環境變數和其他設置。完成定義後，您可以建立一個任務 (ECS Task)，這時候你的容器才會真正被運行。</p>
+
+<p>讓我們首先建立一個任務定義 (Task definition)。只需前往 <strong>Task definition</strong> 頁面，然後選擇 <strong>Create new task definition with JSON</strong> 建立：</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-create-task-definition-with-json.png" alt="Create new task definition with JSON" /></p>
+
+<p>這個範例中，描述了如何啟動一個容器並且使用我自定義的 Image (<code>easoncao/ecs-demo-app</code>)，請求了 <code>128 vCPU</code> 單位的 CPU 資源和 <code>128 MB</code> 單位的記憶體資源。並且將 <code>hostPort</code> 設置為 <code>0</code>，以將容器服務的端口 (Port) <code>80</code> 對應到到在 EC2 instance 上會啟動的動態端口 (Port)，當在 Bottlerocket instance 上運行任務時，這可以將容器服務公開到這個動態的端口設定。以下是我的 Task definition 相關 JSON 片段：</p>
+
+<pre><code class="language-bash">{
+    "containerDefinitions": [
+        {
+            "name": "demo",
+            "image": "easoncao/ecs-demo-app:latest",
+            "cpu": 128,
+            "memory": 128,
+            "portMappings": [
+                {
+                    "containerPort": 80,
+                    "hostPort": 0,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true
+        }
+    ],
+    "family": "easontechtalk-demo",
+    "requiresCompatibilities": [
+        "EC2"
+    ]
+}
+</code></pre>
+
+<p>在此任務定義 (Task definition) 中，我們定義了一個名為 <code>demo</code> 的容器，該容器使用 <code>easoncao/ecs-demo-app</code> 運行，並且有 <code>128 vCPU</code> 和 <code>128 MB</code> 的資源使用單位。此外，我們還將容器端口 (Port) <code>80</code> 對應到主機端口 <code>0</code>，並使用 TCP 協定。</p>
+
+<p>完成建立後，後續你就可以使用這個任務定義 (Task definition) 來運行 ECS Task。</p>
+
+<h3 id="建立一個-ecs-cluster">建立一個 ECS cluster</h3>
+
+<p>為了使用 Bottlerocket 啟動 ECS Task，你同時也會需要建立一個 ECS Cluster 並將使用 Bottlerocket 為作業系統基礎的 EC2 instances 註冊到其中。</p>
+
+<p>如果你是使用新版的 ECS Cosnole，新的 ECS Console 簡化了建立的使用體驗。要建立一個 ECS Cluster，你可以前往 <a href="https://console.aws.amazon.com/ecs/v2/clusters">ECS Console</a>，選擇 <strong>Clusters</strong> 並點擊 <strong>Create cluster</strong> 按鈕，即可按照說明步驟完成建立：</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-create-cluster-console.png" alt="Create an ECS Cluster in ECS Console" /></p>
+
+<p>如果你偏好使用 CLI，也可以使用 AWS CLI 提供的 ECS 命令<sup id="fnref:aws-cli-ecs-create-cluster" role="doc-noteref"><a href="#fn:aws-cli-ecs-create-cluster" class="footnote" rel="footnote">1</a></sup> 完成。以下是在 <code>eu-west-1</code> 區域中建立一個名為 <code>easontechtalk-bottlerocket</code> 的 ECS Cluster 資源的範例命令：</p>
+
+<pre><code class="language-bash">aws ecs create-cluster --cluster-name easontechtalk-bottlerocket --region eu-west-1
+</code></pre>
+
+<p>如果你是使用 AWS 控制台 (ECS Console)，在建立階段的 <strong>Infrastructure</strong> 選項底下下，可以勾選 <strong>Amazon ECS instances</strong> 選項，這個選項會提示你設定 EC2 Auto Scaling Group 和啟動 EC2 instances 的細節。要使用 Bottlerocket 啟動，選擇 <strong>Create new ASG</strong> 會有 <strong>Operating system/Architecture</strong> 一欄出現選項供你選擇 Bottlerocket 作為您的操作系統：</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-create-cluster-asg-select-bottlerocket-os.png" alt="Create cluster and select Bottlerocket OS" /></p>
+
+<p>但如果你想自己啟動 EC2 instances，也可以稍後參考後面的步驟再建立這些資源。</p>
+
+<h3 id="註冊-bottlerocket-instances">註冊 Bottlerocket instances</h3>
+
+<p>如果你要自己啟動 EC2 instance，首先第一步是需要找到不同 AWS 區域中提供對應最新版的 Bottlerocket AMI ID。這部分你可以使用 AWS CLI 命令或使用 AMI 對應的快速連結<sup id="fnref:bottlerocket-ami-links" role="doc-noteref"><a href="#fn:bottlerocket-ami-links" class="footnote" rel="footnote">2</a></sup>來獲得 AMI ID 的資訊。以下是幾個範例和 AWS CLI 命令：</p>
+
+<pre><code>https://console.aws.amazon.com/systems-manager/parameters/aws/service/bottlerocket/aws-ecs-1/x86_64/latest/image_id/description?region=&lt;REGION&gt;#
+</code></pre>
+
+<p>例如，以下是在 <code>eu-west-1</code> 地區取得最新的 Bottlerocket x86_64 AMI ID 的範例。在這個範例中返回了 AMI ID <code>ami-0d5571466e5537410</code>：</p>
+
+<ul>
+  <li><a href="https://console.aws.amazon.com/systems-manager/parameters/aws/service/bottlerocket/aws-ecs-1/x86_64/latest/image_id/description?region=eu-west-1">https://console.aws.amazon.com/systems-manager/parameters/aws/service/bottlerocket/aws-ecs-1/x86_64/latest/image_id/description?region=eu-west-1</a></li>
+</ul>
+
+<p>(AWS CLI)</p>
+<pre><code class="language-bash">aws ssm get-parameter --region eu-west-1 \
+    --name "/aws/service/bottlerocket/aws-ecs-1/x86_64/latest/image_id" \
+        --query Parameter.Value --output text
+
+# Output
+ami-0d5571466e5537410
+</code></pre>
+
+<p>在取得 Bottlerocket 作業系統的 AMI ID 之後，下一個步驟便是啟動 EC2 instance，並透過內建的啟動程序機制自動的將 EC2 instance 註冊到我們前面建立的 ECS Cluster 中 (<code>easontechtalk-bottlerocket</code>)。你可以前往啟動 EC2 實例的頁面，並輸入剛剛取得的 AMI ID 資訊，並且選擇它：</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ec2-launch-select-bottlerocket-ami.png" alt="Select Bottlerocket AMI" />
+<img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ec2-launch-ami-overview.png" alt="Using Bottlerocket AMI Overview" /></p>
+
+<p>在設定的頁面也記得確保選擇了必須的 IAM Profle (IAM Role)，以允許 EC2 instance 啟動階段有權限具備註冊到 ECS Cluster 的權限 (名稱通常是 <code>ecsInstanceRole</code>。有關如何檢查 IAM Role 的詳細資訊，請參考<sup id="fnref:ecs-container-instance-iam-role" role="doc-noteref"><a href="#fn:ecs-container-instance-iam-role" class="footnote" rel="footnote">3</a></sup>）。</p>
+
+<p>此外，要特別注意的地方是，如果你過去熟悉如何使用一般的 ECS-optimized AMI 註冊 EC2 instance 至 ECS Cluster，使用 Bottlerocket 系統的區別在於 UserData 內容：</p>
+
+<p>(General ECS-optimized AMI)</p>
+
+<pre><code class="language-bash">#!/bin/bash
+echo "ECS_CLUSTER=CLUSTER_NAME" &gt;&gt; /etc/ecs/ecs.config
+</code></pre>
+
+<p>(Bottlerocket AMI: 如果你使用 Bottlerocket 需要使用這個方法啟動)</p>
+
+<pre><code class="language-bash">[settings.ecs]
+cluster = "CLUSTER_NAME"
+</code></pre>
+
+<p>請將 <code>CLUSTER_NAME</code> 取代為您自己的集群名稱。在這個範例中，我將我的集群名稱（<code>easontechtalk-bottlerocket</code>）貼到進階選項 (<strong>Advanced details</strong>) 中的 UserData 設定：</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ec2-launch-bottlerocket-userdata.png" alt="Configure UserData for Bottlerocket AMI Bootstrapping process" /></p>
+
+<p>一旦 EC2 Instance 成功啟動，將會自動註冊到 ECS Cluster 並且加入到集群中。要檢查 EC2 instance 是否有加入 ECS Cluster，你也可以在 ECS Console 中的 <strong>Infrastructure</strong> 選項中查看到詳細的資訊：</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-cluster-view-container-instance.png" alt="View the container instance" /></p>
+
+<h3 id="在-bottlerocket-上運行一個-ecs-task">在 Bottlerocket 上運行一個 ECS Task</h3>
+
+<p>現在，你可以直接透過 ECS Console 上運行 ECS Task，點擊 <strong>Run new task</strong>：</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-console-run-new-task.png" alt="Run new task" /></p>
+
+<p>在詳細設定頁面中，我選擇了前面步驟所建立的任務定義 (Task definition) 版本，然後在 Desired Tasks 選項中，指定運行 1 個 ECS Task 任務數量：</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-console-run-task-detail.png" alt="Run new task detail" /></p>
+
+<p>一旦 ECS Task 啟動，可以透過 ECS Console 或 AWS CLI 來監控容器運行的狀態狀態。如果在主控台頁面，你可以直接點擊 ECS Task 的詳細信息，以檢視更多容器的詳細資訊，甚至可以獲取我們前面所設定有關網路相關的選項，可以看到容器對應的端口 (Container Port 以及 Host Port)。</p>
+
+<p>在這個範例中，我的容器部署在 Bottlerocket instance 上，並公開服務端口 (Port) <code>49153</code>：</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/view-ecs-task-container-detail.png" alt="View container network binding detail" /></p>
+
+<p>因為 ECS task 使用的是預設的容器 bridge 網路，要測試應用，我可以直接訪問 EC2 instance 對應的公開 IP 地址，並且使用 ECS 上面所分配的動態端口 (<code>49153</code>) 來連接我的容器。要注意由於端口可能是動態的，需要確保在你嘗試連接到容器之前，需要設定好對應的 Security Group (安全組) 防火牆規則，以允許你的用戶端請求通過訪問。</p>
+
+<p>如果你使用這個範例的 Task definition 並且正確連接上，這個範例程式會透過網頁顯示 ECS Task 的詳細信息：</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/view-exposed-task-webpage.png" alt="View the task service web page" /></p>
+
+<h2 id="總結">總結</h2>
+
+<p>在這篇內容中，簡介了 AWS 所釋出的 Bottlerocket 作業系統、簡介 Bottlerocket 以輕量和安全為設計訴求所帶來跟一般 ECS-optimized AMI 的顯著差異。並且分享了如何 Amazon ECS 上使用 Bottlerocket 作業系統運行一個容器應用程式 (ECS Task)，並且了解相關流程。</p>
+
+<h2 id="參考資源">參考資源</h2>
+<ul>
+  <li><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/bootstrap_container_instance.html">Bootstrapping container instances with Amazon EC2 user data</a></li>
+</ul>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:aws-cli-ecs-create-cluster" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/cli/latest/reference/ecs/create-cluster.html">AWS CLI - ECS Create Cluster</a> <a href="#fnref:aws-cli-ecs-create-cluster" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:bottlerocket-ami-links" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-bottlerocket.html#ecs-bottlerocket-retrieve-ami">Using Bottlerocket with Amazon ECS - Retrieving an Amazon ECS-optimized Bottlerocket AMI</a> <a href="#fnref:bottlerocket-ami-links" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:ecs-container-instance-iam-role" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/instance_IAM_role.html">Amazon ECS container instance IAM role</a> <a href="#fnref:ecs-container-instance-iam-role" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Container Service (ECS)" /><category term="Container" /><summary type="html"><![CDATA[Amazon Elastic Container Service (ECS) 是用於管理在 Amazon Web Services (AWS) 上以容器化方式運行的容器調度服務。類似於 Kubernetes、Docker Swarm 等集成方案，Amazon ECS 提供了一種簡單的功能性來幫助你啟動和擴展容器化應用程式，這樣簡單的特性使得 ECS 成為許多企業用戶快速且有效部署其容器應用程式的理想選擇。]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2023/launch-ecs-task-with-bottlerocket/cover.jpg" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2023/launch-ecs-task-with-bottlerocket/cover.jpg" xmlns:media="http://search.yahoo.com/mrss/" /></entry></feed>

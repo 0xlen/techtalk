@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>Recover cluster permission with EKS Access Entry | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry/" /-->
+
+<meta http-equiv="Content-Language" content="en">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Recover cluster permission with EKS Access Entry | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="Recover cluster permission with EKS Access Entry" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="In the past, granting access permissions to Amazon Elastic Kubernetes Service (EKS) clusters typically relied on a combination of AWS IAM Authenticator and the aws-auth ConfigMap. However, this method of management could encounter limitations and issues such as formatting errors, difficulties with automated updates, and the accidental deletion of IAM users." />
+<meta property="og:description" content="In the past, granting access permissions to Amazon Elastic Kubernetes Service (EKS) clusters typically relied on a combination of AWS IAM Authenticator and the aws-auth ConfigMap. However, this method of management could encounter limitations and issues such as formatting errors, difficulties with automated updates, and the accidental deletion of IAM users." />
+<link rel="canonical" href="https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry/" />
+<meta property="og:url" content="https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2024-02-25T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png" />
+<meta property="twitter:title" content="Recover cluster permission with EKS Access Entry" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2024-02-25T00:00:00+00:00","datePublished":"2024-02-25T00:00:00+00:00","description":"In the past, granting access permissions to Amazon Elastic Kubernetes Service (EKS) clusters typically relied on a combination of AWS IAM Authenticator and the aws-auth ConfigMap. However, this method of management could encounter limitations and issues such as formatting errors, difficulties with automated updates, and the accidental deletion of IAM users.","headline":"Recover cluster permission with EKS Access Entry","image":"https://easontechtalk.com/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/" alt="Home">Home</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/about/" alt="About">About</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/tw/" alt="中文 Chinese">中文 Chinese</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png" alt="Recover cluster permission with EKS Access Entry">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/categories#amazon-elastic-kubernetes-service-eks">Amazon Elastic Kubernetes Service (EKS)</a>
+                        </li>
+                        
+                        <li>
+                         <a href="/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">Recover cluster permission with EKS Access Entry</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>In the past, granting access permissions to Amazon Elastic Kubernetes Service (EKS) clusters typically relied on a combination of AWS IAM Authenticator and the aws-auth ConfigMap. However, this method of management could encounter limitations and issues such as formatting errors, difficulties with automated updates, and the accidental deletion of IAM users.</p>
+
+<p>To address these issues, EKS has released a new authentication method — <strong>EKS Access Entry</strong>, offering an optimized solution. EKS Access Entry simplifies the management configuration of the aws-auth ConfigMap and can even restore access permissions to EKS clusters in certain scenarios.</p>
+
+<h2 id="why-is-this-feature-so-important">Why is this feature so important?</h2>
+
+<p>Previously, Amazon EKS integrated IAM as the primary identity authentication system. However, the authentication still relied on AWS IAM Authenticator running in EKS for verification, and this authentication mechanism needed to be managed through the aws-auth ConfigMap. Typically, this workflow isn’t a significant issue, but with the increase in different EKS usage scenarios, several limitations and problems have arisen:</p>
+
+<ul>
+  <li>Directly editing the aws-auth ConfigMap often encounters formatting issues, such as indentation errors, incorrect syntax and formatting, inconsistencies between the new version of yaml and the current online environment, and overwriting of past settings by the new yaml file. Any of these could inadvertently cause disaster.</li>
+  <li>Integrating the CI/CD pipeline to achieve automated updates requires updates to Kubernetes resources (aws-auth ConfigMap). Whether using AWS Lambda, Terraform, CloudFormation, or CDK, in the past, it was necessary to call the Kubernetes API to achieve resource control updates. This could not be accomplished through the APIs provided by AWS EKS itself for automation and permission management. Meanwhile, under the stricter security management of Kubernetes Role-Based Access Control (RBAC) clusters, developers in the team with limited Kubernetes user identities may struggle to update the aws-auth ConfigMap through the Kubernetes API.</li>
+  <li>The IAM user who initially created the EKS Cluster gets deleted, preventing the team from accessing the EKS Cluster. This is a common occurrence when integrating AWS Single-Sign On (AWS SSO) or when a colleague leaves the company. Even AWS’s Root account cannot restore access permissions to the Kubernetes Cluster.</li>
+</ul>
+
+<p>To solve this problem, we can introduce EKS Access Entry to optimize EKS cluster permission management and even rescue and restore cluster access permissions in the above scenarios. EKS Access Entry is a solution that allows administrators to restore access to EKS clusters without needing an IAM user.</p>
+
+<h2 id="digging-deeper-into-the-new-features-of-eks-access-entry">Digging Deeper into the New Features of EKS Access Entry</h2>
+
+<p>EKS Access Entry is a new solution for managing Amazon EKS cluster access permissions. It offers an optimized way to manage cluster authentication modes and access policies, and it addresses the limitations and problems encountered when using IAM Authenticator and aws-auth ConfigMap to manage access permissions.</p>
+
+<p>By default, when creating an EKS cluster, the operation to create the EKS Cluster is automatically assigned to an IAM identity in Kubernetes’s Role-Based Access Control (RBAC) to create rules and a Kubernetes User, and to assign the <code>system:master</code> operating identity.</p>
+
+<h3 id="what-is-kubernetes-role-based-access-control-rbac">What is Kubernetes Role-Based Access Control (RBAC)?</h3>
+
+<p>Kubernetes Role-Based Access Control (RBAC) is a mechanism for implementing authorization and permission management in Kubernetes clusters. Using RBAC, you can define roles and role bindings to grant specific permissions on cluster resources to users or service accounts.</p>
+
+<h3 id="default-eks-authentication">Default EKS Authentication</h3>
+
+<p>Looking back at what was mentioned earlier, in EKS, the default is only to give the IAM identity that created the EKS Cluster (for example: <code>arn:aws:iam::123456789:user/eason</code>) the <code>system:master</code> group operating identity. If you want to allow a new IAM user (for example: <code>arn:aws:iam::123456789:user/developer</code>) to operate the EKS Cluster, <strong>setting any IAM policy in the IAM console cannot grant any access permissions to the EKS Cluster</strong>. Instead, you need to update the <code>aws-auth</code> ConfigMap resource to grant access to other IAM identities:</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/auth-workflow.png" alt="EKS authentication workflow" /></p>
+
+<p>For example: To grant my IAM user access to the EKS Cluster, you can add a <code>mapUsers</code> block to the <code>aws-auth</code> ConfigMap using the kubectl command, which includes a specified user’s ARN (<code>arn:aws:iam::123456789:user/developer</code>), and associates the <code>system:master</code> group, indicating that the <code>developer</code> user now has access to the EKS Cluster.</p>
+
+<pre><code class="language-bash">$ kubectl get cm/aws-auth -o yaml -n kube-system
+apiVersion: v1
+data:
+  mapRoles: |
+    - groups:
+      - system:bootstrappers
+      - system:nodes
+      rolearn: arn:aws:iam::123456789:role/EKSManagedNodeWorkerRole
+      username: system:node:
+  mapUsers: |
+    - groups:
+      - system:masters
+      userarn: arn:aws:iam::123456789:user/developer
+      username: developer
+
+</code></pre>
+
+<h3 id="changes-in-cluster-authentication-mode-after-supporting-eks-access-entry">Changes in Cluster Authentication Mode after Supporting EKS Access Entry</h3>
+
+<p>This update supports EKS Clusters of the following Kubernetes and platform versions:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Kubernetes version</th>
+      <th>Platform version</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1.28</td>
+      <td>eks.6</td>
+    </tr>
+    <tr>
+      <td>1.27</td>
+      <td>eks.10</td>
+    </tr>
+    <tr>
+      <td>1.26</td>
+      <td>eks.11</td>
+    </tr>
+    <tr>
+      <td>1.25</td>
+      <td>eks.12</td>
+    </tr>
+    <tr>
+      <td>1.24</td>
+      <td>eks.15</td>
+    </tr>
+    <tr>
+      <td>1.23</td>
+      <td>eks.17</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Two different authentication modes can be supported:</p>
+
+<ol>
+  <li><strong>IAM Cluster Authentication Mode</strong>: This is the default authentication mode of Amazon EKS, which is based on IAM for identity authentication and relies on the <code>aws-auth</code> ConfigMap.</li>
+  <li><strong>EKS Cluster Authentication Mode (Access Entry)</strong>: This is a new authentication mode introduced by EKS Access Entry. It is based on Kubernetes’s native identity authentication mechanism but is completed via EKS’s own API, making it possible to permit an IAM User/Role operation with a few clicks on the EKS console interface.</li>
+</ol>
+
+<p>In newly created EKS Clusters, you may notice the update of the following options:</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png" alt="EKS authentication modes" /></p>
+
+<h2 id="eks-access-entry-authentication-method">EKS Access Entry Authentication Method</h2>
+
+<h3 id="prerequisites">Prerequisites</h3>
+
+<p>Before using EKS Access Entry, ensure that the following prerequisites are met:</p>
+
+<ul>
+  <li>Your Amazon EKS cluster has the EKS Access Entry feature enabled (as mentioned earlier, the authentication mode supports EKS API and not just ConfigMap).</li>
+  <li>You have the appropriate IAM permissions to perform operations related to EKS Access Entry (for example: <code>eks:CreateAccessEntry</code>, <code>eks:AssociateAccessPolicy</code>, <code>eks:DeleteAccessEntry</code>, <code>eks:DescribeAccessEntry</code>, etc.).</li>
+</ul>
+
+<p>After enabling Access Entry authentication, you can use this new authentication method to manage cluster access permissions.</p>
+
+<h3 id="access-policy-access-permissions">Access Policy Access Permissions</h3>
+
+<p>Each access entry has an associated access policy that defines access permissions to cluster resources. Access policies use the JSON format of AWS Identity and Access Management (IAM) for definition. The following are examples of access policies:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Access Policy</th>
+      <th>Description</th>
+      <th>Kubernetes verb</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>AmazonEKSAdminPolicy</td>
+      <td>Full administration permissions</td>
+      <td>*</td>
+    </tr>
+    <tr>
+      <td>AmazonEKSClusterAdminPolicy</td>
+      <td>Cluster administration permissions</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>AmazonEKSEditPolicy</td>
+      <td>Read-write permissions</td>
+      <td>create, update, delete, get, list</td>
+    </tr>
+    <tr>
+      <td>AmazonEKSViewPolicy</td>
+      <td>Read-only permissions</td>
+      <td>get, list</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The above table may vary with version updates, for details, please refer to [access-policy-permissions].</p>
+
+<h2 id="implementing-and-using-eks-access-entry-to-manage-or-restore-eks-cluster-access-permissions">Implementing and Using EKS Access Entry to Manage or Restore EKS Cluster Access Permissions</h2>
+
+<p>In situations where the IAM user who initially created the EKS Cluster gets deleted, preventing the team from accessing the EKS Cluster, if the current IAM User/Role has the operating permissions of Access Entry, then access permissions to the EKS Cluster can be restored (or revoked) through this feature. EKS Access Entry can be operated through AWS CLI or AWS Management Console.</p>
+
+<p><strong>EKS Console (AWS Management Console)</strong></p>
+
+<p>(1) On the EKS cluster details page, click the “Access” option.</p>
+
+<p>(2) On the “IAM Access Entries” page, click the “Create access entry” button in the upper right corner.</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/create-access-entry.png" alt="Create EKS Access Entry" /></p>
+
+<p>(3) In the “Create access entry” dialog box, enter the following information:</p>
+
+<ul>
+  <li>IAM Principal ARN: Specify the ARN of the IAM User or IAM Role.</li>
+  <li>Kubernetes groups: This field is used to associate the IAM User/Role with the Kubernetes Group (Role &amp; Rolebinding) that is predefined in Kubernetes RBAC. If you want to directly associate the predefined Access Entry Policy (for example: <code>AmazonEKSClusterAdminPolicy</code>), you can skip this.</li>
+  <li>Kubernetes username: The username you want this IAM user or role to have in Kubernetes. You can enter the name you want here or leave it blank. For example, <code>admin</code>.</li>
+</ul>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/config-iam-access-entry.png" alt="Configure IAM Access Entry" /></p>
+
+<p>(4) In this step, you can choose the default Access Entry to grant IAM identity access permissions to the EKS Cluster. For example: <code>arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy</code>.</p>
+
+<ul>
+  <li>Access Scope: Used to grant the scope of influence of the associated policy, for example, specifying that the IAM
+User or Role should have permissions to all namespaces or to a specific namespace.</li>
+</ul>
+
+<p>(5) Click “Add Policy” to associate the policy。</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/access-policy.png" alt="設定 Access Policy" /></p>
+
+<p><strong>AWS CLI</strong></p>
+
+<p>Alternatively, you can use the AWS CLI to create an access entry. Below are the steps to use AWS CLI to add a Cluster Admin to the EKS cluster via EKS Access Entry (using ‘eks-cluster’ as an example for the cluster name):</p>
+
+<p>(1) Update your EKS cluster configuration to enable EKS Access Entry authentication mode (if you’ve already done this step, you can skip it).</p>
+
+<pre><code class="language-bash">aws eks update-cluster-config \
+          --name eks-cluster  \
+          --access-config authenticationMode=API_AND_CONFIG_MAP
+</code></pre>
+
+<p>(2) Create an Access Entry, and specify the IAM principal ARN (e.g., IAM User or IAM Role, here we use <code>arn:aws:iam::0123456789012:role/eks-admin</code> as an example)</p>
+
+<pre><code class="language-bash"> aws eks create-access-entry \
+  --cluster-name eks-cluster \
+  --principal-arn "arn:aws:iam::0123456789012:role/eks-admin"
+</code></pre>
+
+<p>(3) Associate the access policy with the Access Entry you just created. Here we use <code>AmazonEKSAdminPolicy</code> (which provides full administrative permissions) as an example.</p>
+
+<pre><code class="language-bash"> aws eks associate-access-policy \
+  --cluster-name eks-cluster \
+  --principal-arn "arn:aws:iam::0123456789012:role/eks-admin" \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy \
+  --access-scope '{"type": "cluster"}
+
+</code></pre>
+
+<p>After completing the above steps, you have successfully added a Cluster Admin to the EKS cluster via EKS Access Entry.</p>
+
+<p><strong>Other Permission Settings</strong></p>
+
+<p>Another use case is to link the EKS Access Entry feature with Kubernetes RBAC’s own permissions.</p>
+
+<p>For instance, we can create a Kubernetes Cluster called ‘pod-and-config-viewer’, and grant this role the permission to view Kubernetes Pods.</p>
+
+<pre><code class="language-yaml">apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pod-viewer-role
+rules:
+  - apiGroups: ['']
+    resources: ['pods', 'pods/log']
+    verbs: ['list', 'get', 'watch']
+
+</code></pre>
+
+<p>Then, we bind this role to the ‘pod-viewers’ group.</p>
+
+<p>Note: The Kubernetes Group (‘pod-viewers’) does not need to be created in advance.</p>
+
+<pre><code class="language-bash">kubectl create clusterrolebinding pod-viewer \
+  --clusterrole=pod-viewer-role \
+  --group=pod-viewers
+</code></pre>
+
+<p>Finally, you can directly use the corresponding feature of EKS Access Entry to associate the IAM role <code>arn:aws:iam::0123456789012:role/eks-pod-viewer</code> with the Kubernetes group <code>pod-viewers</code>, further enhancing the flexibility of permission settings.</p>
+
+<pre><code class="language-bash">aws eks create-access-entry \
+  --cluster-name eks-cluster \
+  --principal-arn "arn:aws:iam::0123456789012:role/eks-pod-viewer" \
+  --kubernetes-group pod-viewers
+</code></pre>
+
+<h2 id="summary">Summary</h2>
+
+<p>The release of EKS Access Entry introduces a new, more flexible mechanism for managing access permissions to EKS clusters. By integrating directly with Kubernetes’s native identity authentication mechanism and providing a straightforward user interface, it simplifies the process of managing IAM users and roles. Moreover, in scenarios where access to the EKS Cluster is lost due to the deletion of the IAM user who initially created it, EKS Access Entry can restore access permissions, providing a safety net for teams using EKS.</p>
+
+<p>It is important to note that EKS Access Entry doesn’t replace the use of the <code>aws-auth</code> ConfigMap, but provides an additional, more flexible way to manage access permissions. This feature is currently supported in EKS clusters of Kubernetes version 1.23 and higher. For more information, refer to the official AWS documentation.</p>
+
+<h2 id="reference">Reference</h2>
+
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2024-02-25">25 Feb 2024</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/utilize-eks-cluster-health-status/">&laquo; Utilize EKS Cluster Health Status to monitor your cluster</a>
+                </div>
+              
+              
+                <div class="col-md-6 text-right pr-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs/">Deep dive into Kubernetes Garbage Collector: Container Image &raquo;</a>
+                </div>
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#why-is-this-feature-so-important">Why is this feature so important?</a></li>
+<li class="toc-entry toc-h2"><a href="#digging-deeper-into-the-new-features-of-eks-access-entry">Digging Deeper into the New Features of EKS Access Entry</a></li>
+<li class="toc-entry toc-h2"><a href="#eks-access-entry-authentication-method">EKS Access Entry Authentication Method</a></li>
+<li class="toc-entry toc-h2"><a href="#implementing-and-using-eks-access-entry-to-manage-or-restore-eks-cluster-access-permissions">Implementing and Using EKS Access Entry to Manage or Restore EKS Cluster Access Permissions</a></li>
+<li class="toc-entry toc-h2"><a href="#summary">Summary</a></li>
+<li class="toc-entry toc-h2"><a href="#reference">Reference</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+
+<!-- Begin Default Newsletter Signup Form -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>Sign up to get the update</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail Address" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('Request has been sent!').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('You are in the mailing list!').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/" alt="Home">Home</a>
+    </li>
+    
+    <li>
+      <a href="/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

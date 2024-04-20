@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>Utilize EKS Cluster Health Status to monitor your cluster | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/utilize-eks-cluster-health-status/" /-->
+
+<meta http-equiv="Content-Language" content="en">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Utilize EKS Cluster Health Status to monitor your cluster | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="Utilize EKS Cluster Health Status to monitor your cluster" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="As an AWS user, it is crucial to monitor the health status of your Elastic Kubernetes Service (EKS) cluster to ensure its stability and performance. By keeping a close eye on your cluster’s health issue report, you can proactively address any issues and maintain the overall health of your Kubernetes cluster. In the past, there’s no such way to let you understand what things could potentially break your EKS cluster until you hit some issue (e.g. Unable to upgrade the cluster). But recently Amazon EKS introduced a small change of cluster-related health details in the EKS console and API, providing administrators enhanced visibility into the health of their clusters." />
+<meta property="og:description" content="As an AWS user, it is crucial to monitor the health status of your Elastic Kubernetes Service (EKS) cluster to ensure its stability and performance. By keeping a close eye on your cluster’s health issue report, you can proactively address any issues and maintain the overall health of your Kubernetes cluster. In the past, there’s no such way to let you understand what things could potentially break your EKS cluster until you hit some issue (e.g. Unable to upgrade the cluster). But recently Amazon EKS introduced a small change of cluster-related health details in the EKS console and API, providing administrators enhanced visibility into the health of their clusters." />
+<link rel="canonical" href="https://easontechtalk.com/utilize-eks-cluster-health-status/" />
+<meta property="og:url" content="https://easontechtalk.com/utilize-eks-cluster-health-status/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2024/utilize-eks-cluster-health-status/cover.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2024-01-27T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2024/utilize-eks-cluster-health-status/cover.png" />
+<meta property="twitter:title" content="Utilize EKS Cluster Health Status to monitor your cluster" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2024-01-27T00:00:00+00:00","datePublished":"2024-01-27T00:00:00+00:00","description":"As an AWS user, it is crucial to monitor the health status of your Elastic Kubernetes Service (EKS) cluster to ensure its stability and performance. By keeping a close eye on your cluster’s health issue report, you can proactively address any issues and maintain the overall health of your Kubernetes cluster. In the past, there’s no such way to let you understand what things could potentially break your EKS cluster until you hit some issue (e.g. Unable to upgrade the cluster). But recently Amazon EKS introduced a small change of cluster-related health details in the EKS console and API, providing administrators enhanced visibility into the health of their clusters.","headline":"Utilize EKS Cluster Health Status to monitor your cluster","image":"https://easontechtalk.com/assets/images/2024/utilize-eks-cluster-health-status/cover.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/utilize-eks-cluster-health-status/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/utilize-eks-cluster-health-status/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/" alt="Home">Home</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/about/" alt="About">About</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/tw/" alt="中文 Chinese">中文 Chinese</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2024/utilize-eks-cluster-health-status/cover.png" alt="Utilize EKS Cluster Health Status to monitor your cluster">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/categories#amazon-elastic-kubernetes-service-eks">Amazon Elastic Kubernetes Service (EKS)</a>
+                        </li>
+                        
+                        <li>
+                         <a href="/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">Utilize EKS Cluster Health Status to monitor your cluster</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>As an AWS user, it is crucial to monitor the health status of your Elastic Kubernetes Service (EKS) cluster to ensure its stability and performance. By keeping a close eye on your cluster’s health issue report, you can proactively address any issues and maintain the overall health of your Kubernetes cluster. In the past, there’s no such way to let you understand what things could potentially break your EKS cluster until you hit some issue (e.g. Unable to upgrade the cluster). But recently Amazon EKS introduced a small change of cluster-related health details in the EKS console and API, providing administrators enhanced visibility into the health of their clusters.</p>
+
+<h2 id="whats-the-change">What’s the change?</h2>
+
+<p>On December 28, 2023, Amazon EKS announced now it surfaces cluster health status details.<sup id="fnref:whats-new-eks-surfaces-cluster-health-status-details" role="doc-noteref"><a href="#fn:whats-new-eks-surfaces-cluster-health-status-details" class="footnote" rel="footnote">1</a></sup></p>
+
+<p>The cluster health status information helps customers to quickly diagnose, troubleshoot, and remedy issues with their clusters, enabling them to run more up-to-date and secure application environments.</p>
+
+<p>Because the underlying infrastructure or configuration issues may lead to impaired EKS clusters and prevent EKS from applying updates or upgrading to newer Kubernetes versions. EKS users have responsible for configuring cluster infrastructure such as IAM roles and EC2 subnets. This change reduces the time administrators need to spend troubleshooting infrastructure health issues, making it easier to run secure Kubernetes environments.</p>
+
+<p>In this blog post, we will discuss what’s new and how you can utilize the EKS cluster health status to monitor your EKS cluster effectively.</p>
+
+<h2 id="monitoring-the-health-status-of-your-eks-cluster">Monitoring the Health Status of your EKS Cluster</h2>
+
+<h3 id="benefits-of-monitoring-eks-cluster-health-status">Benefits of Monitoring EKS Cluster Health Status</h3>
+
+<p>Monitoring the health status of your EKS cluster offers several benefits. It allows you to stay informed about the overall health and performance of your cluster. By receiving real-time notifications, you can quickly identify any issues or potential problems and take immediate action to resolve them. This proactive approach helps prevent downtime and ensures the smooth functioning of your EKS cluster.</p>
+
+<h3 id="describecluster-api-call">DescribeCluster API Call</h3>
+
+<p>The first method to monitor the health status of your EKS cluster is by utilizing the <code>DescribeCluster</code> API call. This API call adds new field to retrieve detailed information about your cluster, including its current status, several different error code<sup id="fnref:api-cluster-issue-contents" role="doc-noteref"><a href="#fn:api-cluster-issue-contents" class="footnote" rel="footnote">2</a></sup>, and any ongoing issues. By making use of this API call, you can gain insights into the health and performance of your cluster.</p>
+
+<pre><code class="language-bash">$ aws eks describe-cluster --name eks --region eu-west-1
+{
+    "cluster": {
+        "name": "eks",
+        "arn": "arn:aws:eks:eu-west-1:11222334455:cluster/eks",
+        "createdAt": "2024-01-23T20:51:44.751000+00:00",
+        "version": "1.27",
+    }
+    "health": {
+            "issues": []
+        }
+    }
+}
+</code></pre>
+
+<p>By leveraging either the DescribeCluster API call or the EKS Console, you can stay informed about the health status of your EKS cluster. This enables you to take immediate action in case of any issues or potential problems, ensuring the smooth operation of your applications.</p>
+
+<h3 id="eks-console">EKS Console</h3>
+
+<p>You can also monitor the health status of your EKS cluster is through the EKS Console. The EKS Console adds new section to provide the health status of your cluster. With the EKS Console, you can easily navigate through different sections and obtain real-time information about your cluster’s health.</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/cover.png" alt="Cluster health issue details on EKS console" /></p>
+
+<h2 id="integrate-slack-notification-for-monitoring">Integrate Slack notification for Monitoring</h2>
+
+<p>Currently, the EKS Cluster doesn’t onboard proactive notification or CloudWatch event, which means you need to check the status by calling API manually. To set up monitoring for your EKS cluster health status and receive notification, you can consider integrating EventBridge with your cluster. EventBridge is a serverless event bus service provided by AWS, which allows you to route events between different AWS services and external applications, or even set up schedule event to trigger action. By configuring EventBridge to trigger a Lambda function and monitor the <code>DescribeCluster</code> API call, you can receive real-time notifications whenever there are changes or updates to your cluster’s health status.</p>
+
+<p>Below is the simple solution I have implemented:</p>
+
+<h3 id="solution-overview">Solution overview</h3>
+
+<ul>
+  <li>Create a Lambda function (<strong>MoninitorEKSClusterHealth</strong>) and utilize the <code>DescribeCluster</code> API call</li>
+  <li>Associate Slack Channel with AWS Bot and create a SNS topic for notification</li>
+  <li>Use EventBridge Scheduler to schedule cron job for invoking the Lambda function (<strong>MoninitorEKSClusterHealth</strong>) regularly. If the cluster has health issue, it throw the error in the execution.</li>
+  <li>Create CloudWatch alarm to monitor Lambda function (<strong>MoninitorEKSClusterHealth</strong>) error and trigger SNS for real-time Slack notifications</li>
+</ul>
+
+<p><strong>Create a Lambda function</strong></p>
+
+<p>The first step is to have Lambda function can help us interpret the cluster health status and capture any error, below is an example by using Python:</p>
+
+<pre><code class="language-python">import json
+import boto3
+
+def describe_eks_cluster(cluster_name):
+    eks_client = boto3.client('eks')
+    response = eks_client.describe_cluster(name=cluster_name)
+    health_issues = response['cluster']['health']['issues']
+
+    if len(health_issues) &gt; 0:
+        raise Exception("Cluster has health issues: {0}".format(health_issues))
+
+    return response
+
+def lambda_handler(event, context):
+    cluster_name = event['eks-cluster-name']
+    cluster_info = ''
+
+    cluster_info = describe_eks_cluster(cluster_name)
+    print(cluster_info)
+
+    return {
+        'statusCode': 200,
+        'body': 'success'
+    }
+</code></pre>
+
+<p>When there’s a cluster health issue, the API will response the details in the health issue field. For example, below is an error that captured from CloudWatch Log group of my <strong>MoninitorEKSClusterHealth</strong> function. <em>**</em>It indicates that there is an exception in the code related to a cluster’s health issues. The specific error is <code>Ec2SecurityGroupNotFound</code> which means that one or more security groups associated with the cluster could not be found.</p>
+
+<pre><code class="language-python">[ERROR] Exception: Cluster has health issues:
+
+['code': 'Ec2SecurityGroupNotFound',
+ 'message': "We couldn't find one or more security group associated with your cluster. Call eks update-cluster-config API to update subnets.",
+ 'resourceIds': ['sg-XXXXXXX']
+Traceback (most recent call last):
+File "/var/task/Lambda_function.py", line 18, in lambda_handler
+cluster_info = describe_ eks_cluster(cluster_name)
+File "/var/task/lambda_function.py", line 10, in describe_eks_cluster raise Exception("Cluster has health issues: {01" format(health_issues))
+</code></pre>
+
+<p>The exception throwing for existing health issue by the python code is the key, as it can generate an error for CloudWatch metric of AWS Lambda, which can be monitored by creating an CloudWatch alarm.</p>
+
+<p><strong>Create a schedule in AWS EventBridge Scheuler</strong></p>
+
+<p>The next step in monitoring the health status of your EKS cluster is to create a schedule in AWS EventBridge Scheduler. In my environment I pass the parameter <code>eks-cluster-name</code> to let the scheduled job knowing which cluster I want to check when invoking my function. By configuring a cron job to regularly invoke the Lambda function, you can ensure that the health status of your cluster is checked at specified intervals.</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/eventbridge-create-schedule.png" alt="Set up a schedule to regularly invoke Lambda function" /></p>
+
+<p><strong>Set up an CloudWatch Alarm</strong></p>
+
+<p>Once we have a Lambda function to report the cluster health and will be triggered regularly, we can set up an CloudWatch Alarm and only monitor this Lambda function to capture error. In my case I simply set up an alarm to monitor <code>Erros</code>  metric under <code>AWS/Lambda</code> namespace for my function (<strong>MoninitorEKSClusterHealth</strong>):</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/cw-alarm.png" alt="Alarm when the cluster has health issue" /></p>
+
+<p>In case the cluster has any health issues, the Lambda function will throw an error during execution, and CloudWatch alarm will flip to <code>In alarm</code> state, triggering real-time Slack notifications via CloudWatch alarms and SNS topics. In my account, I already have AWS Bot (Slack chatbot) configured and subscribed it a SNS topic<sup id="fnref:set-up-aws-chat-bot" role="doc-noteref"><a href="#fn:set-up-aws-chat-bot" class="footnote" rel="footnote">3</a></sup>. This allows me can stay updated and take immediate action to resolve any problems with my EKS cluster.</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/slack-execution.png" alt="AWS Chatbot send Slack notification for the alarm" /></p>
+
+<p>The AWS Chatbot also provides capability to view the error logs of the Lambda function, this could be very useful and easily access more information to understand why the cluster is having health issue:</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/slack-execution-details.png" alt="View error in Slack" /></p>
+
+<h2 id="conclusion">Conclusion</h2>
+
+<p>In conclusion, monitoring the health status of your EKS cluster is crucial for maintaining its stability, performance, and security. By utilizing the <code>DescribeCluster</code> API call or the EKS Console, you can stay informed about the health status of your cluster and take prompt action when needed. Additionally, integrating EventBridge can enhance your monitoring capabilities and provide real-time notifications. This post walk through the feature by utilizing the <code>DescribeCluster</code> API call and share how to receive real-time notifications about your cluster’s health status and take immediate action when needed.</p>
+
+<p>Start monitoring your EKS cluster’s health status today to ensure the optimal functioning of your applications.</p>
+
+<h2 id="reference">Reference</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:whats-new-eks-surfaces-cluster-health-status-details" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/about-aws/whats-new/2023/12/amazon-eks-surfaces-cluster-health-status-details/">Amazon EKS now surfaces cluster health status details</a> <a href="#fnref:whats-new-eks-surfaces-cluster-health-status-details" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:api-cluster-issue-contents" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/APIReference/API_ClusterIssue.html#API_ClusterIssue_Contents">Amazon EKS API Reference - ClusterIssue</a> <a href="#fnref:api-cluster-issue-contents" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:set-up-aws-chat-bot" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/chatbot/latest/adminguide/slack-setup.html">Set up AWS Chatbot - Get started with Slack</a> <a href="#fnref:set-up-aws-chat-bot" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2024-01-27">27 Jan 2024</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error/">&laquo; Troubleshooting EKS Managed Node Group PodEvictionFailure Error</a>
+                </div>
+              
+              
+                <div class="col-md-6 text-right pr-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry/">Recover cluster permission with EKS Access Entry &raquo;</a>
+                </div>
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#whats-the-change">What’s the change?</a></li>
+<li class="toc-entry toc-h2"><a href="#monitoring-the-health-status-of-your-eks-cluster">Monitoring the Health Status of your EKS Cluster</a></li>
+<li class="toc-entry toc-h2"><a href="#integrate-slack-notification-for-monitoring">Integrate Slack notification for Monitoring</a></li>
+<li class="toc-entry toc-h2"><a href="#conclusion">Conclusion</a></li>
+<li class="toc-entry toc-h2"><a href="#reference">Reference</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+
+<!-- Begin Default Newsletter Signup Form -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>Sign up to get the update</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail Address" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('Request has been sent!').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('You are in the mailing list!').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/" alt="Home">Home</a>
+    </li>
+    
+    <li>
+      <a href="/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

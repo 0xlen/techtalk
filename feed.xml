@@ -1,0 +1,1924 @@
+<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en_us"><generator uri="https://jekyllrb.com/" version="4.3.3">Jekyll</generator><link href="https://easontechtalk.com/feed.xml" rel="self" type="application/atom+xml" /><link href="https://easontechtalk.com/" rel="alternate" type="text/html" hreflang="en_us" /><updated>2024-04-20T16:03:10+00:00</updated><id>https://easontechtalk.com/feed.xml</id><title type="html">Eason Tech Talk</title><author><name>Eason</name></author><entry><title type="html">How Kubecost Retrieves Unused Disk Information across an Entire AWS Account</title><link href="https://easontechtalk.com/how-kubecost-get-all-aws-disks/" rel="alternate" type="text/html" title="How Kubecost Retrieves Unused Disk Information across an Entire AWS Account" /><published>2024-04-20T00:00:00+00:00</published><updated>2024-04-20T00:00:00+00:00</updated><id>https://easontechtalk.com/how-kubecost-get-all-aws-disks</id><content type="html" xml:base="https://easontechtalk.com/how-kubecost-get-all-aws-disks/"><![CDATA[<p>This article will dive into how Kubecost collects information on unused disks across an entire AWS account. Kubecost is a popular tool for managing cost and resources in Kubernetes environments. We will explain how Kubecost identify and collect unused disk resources.</p>
+
+<h2 id="kubecost-introduction">Kubecost Introduction</h2>
+
+<p>Kubecost is a project developed by Stackwatch, specifically for monitoring and analyzing the cost of Kubernetes. It offers both an open-source version (Opencost) and a paid subscription version (Kubecost Enterprise). Its primary use case lies in achieving overall cost visibility for Kubernetes clusters. The open-source version of Kubecost limits the storage period of billing results to 15 days. If you need to keep the metrics for more than 15 days, you will need to upgrade to the paid version.</p>
+
+<p>Amazon EKS supports a custom version of Kubecost (Amazon EKS-optimized Kubecost), co-developed by AWS and Kubecost. With Kubecost, you can view the cost distribution of the cluster, understand which applications or services are consuming the most resources, and allow monitoring based on Kubernetes resources (including Pods, Nodes, Namespaces, and Labels) for detailed cost monitoring and analysis. This helps teams visualize Amazon EKS invoice details, allocate costs, and charge fees to organizational units such as application teams.</p>
+
+<p>In addition, Kubecost can provide information on unused disk space, which is very helpful for resource management and cost control.</p>
+
+<h2 id="how-kubecost-retrieves-unused-disk-information">How Kubecost Retrieves Unused Disk Information</h2>
+
+<p>An interesting question arose around the design of Kubecost’s unused disk information feature. One day, a user installing the Amazon EKS-optimized version of Kubecost found that Kubecost could obtain the unused disk information for the entire account.</p>
+
+<p>This user wondered if the default permissions were too broad. Besides installing Kubecost according to the EKS official document, the user did not provide any account-level permissions, thus raising this question out of curiosity about potential security concerns:</p>
+
+<pre><code class="language-bash">helm upgrade -i kubecost oci://public.ecr.aws/kubecost/cost-analyzer --version kubecost-version \
+    --namespace kubecost --create-namespace \
+    -f https://raw.githubusercontent.com/kubecost/cost-analyzer-helm-chart/develop/cost-analyzer/values-eks-cost-monitoring.yaml
+</code></pre>
+
+<p>To understand the mechanism by which Kubecost obtains all EBS disks under an AWS account, we first need to analyze how Kubecost obtains disk information and understand the relevant permission settings involved.</p>
+
+<p>In order to demystify how it works and do analysis, I used the open-source project opencost as sample, specifically version 2.2. By digging further, the implementation of looking idle AWS EBS disks is defined in the <code>GetOrphanedResources()</code> method <sup id="fnref:kubecost-getorphanedresource" role="doc-noteref"><a href="#fn:kubecost-getorphanedresource" class="footnote" rel="footnote">1</a></sup>:</p>
+
+<pre><code class="language-go">func (aws *AWS) GetOrphanedResources() ([]models.OrphanedResource, error) {
+	volumes, volumesErr := aws.getAllDisks()
+	addresses, addressesErr := aws.getAllAddresses()
+
+  ...
+
+	for _, volume := range volumes {
+		if aws.isDiskOrphaned(volume) {
+			cost, err := aws.findCostForDisk(volume)
+			if err != nil {
+				return nil, err
+			}
+      ...
+
+</code></pre>
+
+<p>If we look further, we can see that <code>getAllDisks()</code> is a method that traverses all regions under the account through a loop, and performs another operation to <code>getDisksForRegion()</code> to get the information in a single region <sup id="fnref:kubecost-getdisk" role="doc-noteref"><a href="#fn:kubecost-getdisk" class="footnote" rel="footnote">2</a></sup>. Here, the <code>DescribeVolumes</code> API provided by EC2 <sup id="fnref:aws-api-ec2-describe-volumes" role="doc-noteref"><a href="#fn:aws-api-ec2-describe-volumes" class="footnote" rel="footnote">3</a></sup> is used to obtain this information:</p>
+
+<pre><code class="language-go">func (aws *AWS) getDisksForRegion(ctx context.Context, region string, maxResults int32, nextToken *string) (*ec2.DescribeVolumesOutput, error) {
+	aak, err := aws.GetAWSAccessKey()
+	if err != nil {
+		return nil, err
+	}
+
+	cfg, err := aak.CreateConfig(region)
+	if err != nil {
+		return nil, err
+	}
+
+	cli := ec2.NewFromConfig(cfg)
+	return cli.DescribeVolumes(ctx, &amp;ec2.DescribeVolumesInput{
+		MaxResults: &amp;maxResults,
+		NextToken:  nextToken,
+	})
+}
+
+func (aws *AWS) getAllDisks() ([]*ec2Types.Volume, error) {
+	regions := aws.Regions()
+	volumeCh := make(chan *ec2.DescribeVolumesOutput, len(regions))
+
+	// Get volumes from each AWS region
+	for _, r := range regions {
+		// Fetch volume response and send results and errors to their
+		// respective channels
+		go func(region string) {
+		   ...
+
+			// Query for first page of volume results
+			resp, err := aws.getDisksForRegion(context.TODO(), region, 1000, nil)
+      ...
+
+</code></pre>
+
+<p>So, the answer seems obvious. Kubecost still relies on the <code>DescribeVolumes</code> provided by AWS to obtain this information at the underlying implementation. But where is this permission from?</p>
+
+<p>In the deployment of Kubecost, the kubecost-cost-analyzer includes a <code>cost-model</code> container application that is responsible for calling the AWS API in the subroutine mentioned above:</p>
+
+<pre><code class="language-bash">NAME                                              READY   STATUS    RESTARTS   AGE
+pod/kubecost-cost-analyzer-688d699b88-w5d8f       0/4     Pending   0          21s
+pod/kubecost-forecasting-6c6456668f-tlhv7         0/1     Pending   0          20s
+pod/kubecost-prometheus-server-6b584dc478-6kd7q   0/1     Pending   0          20s
+
+NAME                                 TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)             AGE
+service/kubecost-aggregator          ClusterIP   10.100.10.104    &lt;none&gt;        9004/TCP            23s
+service/kubecost-cloud-cost          ClusterIP   10.100.193.45    &lt;none&gt;        9005/TCP            23s
+service/kubecost-cost-analyzer       ClusterIP   10.100.26.236    &lt;none&gt;        9003/TCP,9090/TCP   22s
+service/kubecost-forecasting         ClusterIP   10.100.169.241   &lt;none&gt;        5000/TCP            22s
+service/kubecost-prometheus-server   ClusterIP   10.100.185.108   &lt;none&gt;        80/TCP              21s
+
+NAME                                         READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/kubecost-cost-analyzer       0/1     1            0           22s
+deployment.apps/kubecost-forecasting         0/1     1            0           22s
+deployment.apps/kubecost-prometheus-server   0/1     1            0           21s
+
+NAME                                                    DESIRED   CURRENT   READY   AGE
+replicaset.apps/kubecost-cost-analyzer-688d699b88       1         1         0       22s
+replicaset.apps/kubecost-forecasting-6c6456668f         1         1         0       21s
+replicaset.apps/kubecost-prometheus-server-6b584dc478   1         1         0       21s
+
+</code></pre>
+
+<p>Therefore, to figure out where the permission come from, there’s a high probability that we need to look into two permission settings:</p>
+
+<ul>
+  <li>Service Account: Whether the IAM Role for Service Account (IRSA) feature supported by EKS is being used.</li>
+  <li>The IAM permissions (Instance Profile IAM Role) of the Worker Node (EC2 instance) itself.</li>
+</ul>
+
+<p>In the earlier Helm installation steps, we didn’t set any related IRSA permissions. As expected, no IAM Role is associated when I’m looking the service account details. The default Service Account for kubecost is only used to grant Kubecost permissions to access Kubernetes resources (for example, getting permissions for resources like Pod, Node, PV, PVC, and so on). This is defined in the associated Helm Chart <sup id="fnref:kubecost-cost-analyzer-cluster-role-template" role="doc-noteref"><a href="#fn:kubecost-cost-analyzer-cluster-role-template" class="footnote" rel="footnote">4</a></sup>.</p>
+
+<pre><code class="language-bash">$ kubectl get pod/kubecost-cost-analyzer-688d699b88-w5d8f -n kubecost -o yaml | grep -i serviceaccount
+  serviceAccount: kubecost-cost-analyzer
+  serviceAccountName: kubecost-cost-analyzer
+
+$ kubectl describe sa/kubecost-cost-analyzer -n kubecost
+Name:                kubecost-cost-analyzer
+Namespace:           kubecost
+Labels:              app=cost-analyzer
+                     app.kubernetes.io/instance=kubecost
+                     app.kubernetes.io/managed-by=Helm
+                     app.kubernetes.io/name=cost-analyzer
+                     helm.sh/chart=cost-analyzer-2.2.0
+Annotations:         meta.helm.sh/release-name: kubecost
+                     meta.helm.sh/release-namespace: kubecost
+Image pull secrets:  &lt;none&gt;
+Mountable secrets:   &lt;none&gt;
+Tokens:              &lt;none&gt;
+Events:              &lt;none&gt;
+
+</code></pre>
+
+<p>So if it’s not an IRSA setting, we can be more certain that it’s probably related to the IAM permissions associated with the EC2 instance itself. By default, every EKS Worker Node will use some default IAM permission settings (IAM Policy), which include <sup id="fnref:eks-worker-node-iam-role" role="doc-noteref"><a href="#fn:eks-worker-node-iam-role" class="footnote" rel="footnote">5</a></sup>:</p>
+
+<ul>
+  <li><a href="https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonEKSWorkerNodePolicy.html">AmazonEKSWorkerNodePolicy</a></li>
+  <li><a href="https://docs.aws.amazon.com/aws-managed-policy/latest/reference/AmazonEKS_CNI_Policy.html">AmazonEKS_CNI_Policy</a></li>
+</ul>
+
+<p>The purpose of these permissions is to enable necessary Kubernetes applications running on EC2 to work properly (for example: kubelet and CNI Plugin). Therefore, it can be expected that when deploying Kubecost to run on a Worker Node, it will usually use the default IAM permissions corresponding to the EKS node. From the default policy <code>AmazonEKSWorkerNodePolicy</code>, we can notice the following information:</p>
+
+<pre><code class="language-json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeVolumes",
+                ...
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+
+</code></pre>
+
+<p>To verify whether it’s related to the aforementioned permissions, I added a denial policy to the IAM Role corresponding to the Worker Node for testing:</p>
+
+<pre><code class="language-json">{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "TestKubeCostFindAllDisks",
+            "Effect": "Deny",
+            "Action": "ec2:DescribeVolumes",
+            "Resource": "*"
+        }
+    ]
+}
+
+</code></pre>
+
+<p>Not surprisingly, when Kubecost attempts to extract disk data, the anticipated error can be observed:</p>
+
+<pre><code class="language-bash">$ kubectl logs $KUBECOST_POD cost-model -n kubecost
+
+INF unable to get addresses: %s logged 5 times: suppressing future logs
+WRN unable to get disks: operation error EC2: DescribeVolumes, https response error StatusCode: 403, RequestID: b1eb2ada-8813-441c-a2f9-64847e14f6cd, api error UnauthorizedOperation: You are not authorized to perform this operation.
+WRN unable to get disks: operation error EC2: DescribeVolumes, https response error StatusCode: 403, RequestID: 46053624-5c2d-4ef3-a145-f01917eeec84, api error UnauthorizedOperation: You are not authorized to perform this operation.
+</code></pre>
+
+<p>Therefore, we can understand how Kubecost is able to retrieve EBS disk resources from all regions without the need to assign relevant permissions when installing it. The default IAM Role of the worker node associated <code>ec2:DescribeVolumes</code> permission that ensures the necessary operational permissions for the kubelet and corresponding components in the EKS-Optimized AMI. This permission is used to obtain operational information related to the EC2 instance and associated resources in the region (for example, the requirements for deploying EBS Volumes using the EBS CSI Driver) and acts as part of the data for related Kubernetes object resources (for example, PersistentVolume and PersistentVolumeClaim), only provides read access and does not include any write operations, hence it cannot modify any EBS resources.</p>
+
+<p>When kubecost is running, it scans for idle EBS resources (EBS volumes not attached to any EC2 instance) in the AWS account region using the Worker Node’s own IAM identity and permissions. These resources are then filtered out for cost-saving optimization recommendations.</p>
+
+<h2 id="summary">Summary</h2>
+
+<p>This article dive into how Kubecost collects information on unused disks across an AWS account, addressing potential user concerns after installing Kubecost and discovering that it can access unused disk information for the entire account. In addition to conducting relevant code analyses, I also explain how Kubecost interacts with the AWS API and uses a variety of techniques and methods to identify and collect unused disk resources.</p>
+
+<p>Upon thorough analysis and verification, we confirm that Kubecost uses the IAM identity and permissions of the Worker Node itself to obtain information on unused EBS disks within an AWS account. This approach does not overstep or violate security principles, as Kubecost only uses the default <code>ec2:DescribeVolumes</code> permission, a necessary permission to ensure the operation of Kubernetes, and only has read access without the write operation to modify any EBS resources.</p>
+
+<p>Hope this helps and provides readers with a deeper understanding of how Kubecost retrieves information on AWS unused disks, and clarify related security concerns.</p>
+
+<h2 id="references">References</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:kubecost-getorphanedresource" role="doc-endnote">
+      <p><a href="https://github.com/opencost/opencost/blob/088f891d8ed6c48d688c31028542ea7ac34331ed/pkg/cloud/aws/provider.go#L1836C1-L1858C1">opencost v2.2 GetOrphanedResources()</a> <a href="#fnref:kubecost-getorphanedresource" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubecost-getdisk" role="doc-endnote">
+      <p><a href="https://github.com/opencost/opencost/blob/088f891d8ed6c48d688c31028542ea7ac34331ed/pkg/cloud/aws/provider.go#L1702-L1834">opencost v2.2 Get Disks</a> <a href="#fnref:kubecost-getdisk" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:aws-api-ec2-describe-volumes" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeVolumes.html">AWS API - EC2 DescribeVolumes</a> <a href="#fnref:aws-api-ec2-describe-volumes" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubecost-cost-analyzer-cluster-role-template" role="doc-endnote">
+      <p><a href="https://github.com/kubecost/cost-analyzer-helm-chart/blob/b6d32237dbb80b10dd851dbcc07441171b27a701/cost-analyzer/templates/cost-analyzer-cluster-role-template.yaml">kubecost v2.2 cost-analyzer-cluster-role-template.yaml</a> <a href="#fnref:kubecost-cost-analyzer-cluster-role-template" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-worker-node-iam-role" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/create-node-role.html">Amazon EKS node IAM role</a> <a href="#fnref:eks-worker-node-iam-role" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Kubernetes Service (EKS)" /><category term="Kubernetes" /><summary type="html"><![CDATA[This article will dive into how Kubecost collects information on unused disks across an entire AWS account. Kubecost is a popular tool for managing cost and resources in Kubernetes environments. We will explain how Kubecost identify and collect unused disk resources.]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2024/how-kubecost-get-all-aws-disks/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry><title type="html">Deep dive into Kubernetes Garbage Collector: Container Image</title><link href="https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs/" rel="alternate" type="text/html" title="Deep dive into Kubernetes Garbage Collector: Container Image" /><published>2024-03-11T00:00:00+00:00</published><updated>2024-03-11T00:00:00+00:00</updated><id>https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs</id><content type="html" xml:base="https://easontechtalk.com/deep-dive-into-kubernetes-garbage-collector-imagefs/"><![CDATA[<p>How does the kubelet trigger the Garbage Collection mechanism? In this article, we delve into the Kubernetes Garbage Collection and understand how kubelet implements the image cleanup mechanism. Additionally, we will also explore how to monitor imageFS usage accurately.</p>
+
+<p>When the kubelet detects that the available space in imageFs (the filesystem storing container images) falls below a predetermined threshold, it triggers Garbage Collection, i.e., it begins to clear out unneeded container images to free up space. This threshold can be set via the kubelet’s configuration option <code>--image-gc-high-threshold</code> (<code>imageGCHighThresholdPercent</code>), the default value of which is 85%. This means that when the available space in imageFs drops below 85% of the total space, kubelet begins image cleanup work, and one might notice similar prompts in the log like the following:</p>
+
+<pre><code class="language-bash">kubelet[2298]: I0226 11:59:17.153440    2298 image_gc_manager.go:310] "Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold" usage=93 highThreshold=85 amountToFree=69382155468 lowThreshold=80
+
+kubelet[2298]: I0226 12:04:17.157231    2298 image_gc_manager.go:310] "Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold" usage=97 highThreshold=85 amountToFree=88325110988 lowThreshold=80
+
+</code></pre>
+
+<h2 id="how-kubelet-calculates-container-image-space-and-triggers-garbage-collection">How kubelet Calculates Container Image Space and Triggers Garbage Collection</h2>
+
+<p>To understand the Garbage Collection mechanism of kubelet for managing container images, we first need to analyze how kubelet calculates disk space and sets corresponding configuration parameters to trigger cleanup tasks.</p>
+
+<p>Taking the core code of Kubernetes 1.29 as an example <sup id="fnref:k8s-1-29-image-gc-manager" role="doc-noteref"><a href="#fn:k8s-1-29-image-gc-manager" class="footnote" rel="footnote">1</a></sup>. In this section, the <code>usagePercent</code> calculation method is defined, and a condition is provided to check whether it exceeds the value of <code>im.policy.HighThresholdPercent</code>. From this snippet, we can deduce that the logic here is related to triggering image cleanup behavior according to the aforementioned parameter settings:</p>
+
+<pre><code class="language-go">  // Get disk usage on disk holding images.
+  fsStats, _, err := im.statsProvider.ImageFsStats(ctx)
+  if err != nil {
+    return err
+  }
+
+	var capacity, available int64
+	if fsStats.CapacityBytes != nil {
+		capacity = int64(*fsStats.CapacityBytes)
+	}
+	if fsStats.AvailableBytes != nil {
+		available = int64(*fsStats.AvailableBytes)
+	}
+
+  ...
+
+  // If over the max threshold, free enough to place us at the lower threshold.
+  usagePercent := 100 - int(available*100/capacity)
+  if usagePercent &gt;= im.policy.HighThresholdPercent {
+    amountToFree := capacity*int64(100-im.policy.LowThresholdPercent)/100 - available
+    klog.InfoS("Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold", "usage", usagePercent, "highThreshold", im.policy.HighThresholdPercent, "amountToFree", amountToFree, "lowThreshold", im.policy.LowThresholdPercent)
+    freed, err := im.freeSpace(ctx, amountToFree, freeTime, images)
+    if err != nil {
+      return err
+    }
+
+    if freed &lt; amountToFree {
+      err := fmt.Errorf("Failed to garbage collect required amount of images. Attempted to free %d bytes, but only found %d bytes eligible to free.", amountToFree, freed)
+      im.recorder.Eventf(im.nodeRef, v1.EventTypeWarning, events.FreeDiskSpaceFailed, err.Error())
+      return err
+    }
+  }
+
+</code></pre>
+
+<p>Worth mentioning is that the variables <code>capacity</code> and <code>available</code> represent the total and remaining available space respectively, and in practice, they actually refer to the <code>CapacityBytes</code> and <code>AvailableBytes</code> values of <code>statsProvider.ImageFsStats</code>.</p>
+
+<p>If we further analyze the core code, we can find that <code>statsProvider</code> can have slightly different data for fetching the storage space corresponding to the image depending on the implementation (Image Filesystem, hereinafter referred to as imageFS). There are two different implementations of ImageFS in the kubelet core code, one using CRI to fetch and the other using cadvisor. Therefore, in the core code directory, you can notice the existence of two different implementations, <code>cri_stats_provider.go</code> <sup id="fnref:k8s-1-29-cri-stats-provider" role="doc-noteref"><a href="#fn:k8s-1-29-cri-stats-provider" class="footnote" rel="footnote">2</a></sup> and <code>cadvisor_stats_provider.go</code> <sup id="fnref:k8s-1-29-cadvisor-stats-provider" role="doc-noteref"><a href="#fn:k8s-1-29-cadvisor-stats-provider" class="footnote" rel="footnote">3</a></sup>.</p>
+
+<p>This mechanism is supported in Kubernetes 1.23 version with the <code>PodAndContainerStatsFromCRI</code> feature gate <sup id="fnref:feature-gate" role="doc-noteref"><a href="#fn:feature-gate" class="footnote" rel="footnote">4</a></sup>, which allows kubelet to interact with the Container runtime through the CRI interface to obtain container-related metrics and data, but it is turned off by default <sup id="fnref:kubelet-metric-data" role="doc-noteref"><a href="#fn:kubelet-metric-data" class="footnote" rel="footnote">5</a></sup> and uses cadvisor as the main collection source.</p>
+
+<p><img src="/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" alt="/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" /></p>
+
+<p>Regardless of the collection method used, corresponding data statistics provided by kubelet can be retrieved using the API provided by kubelet itself, as shown below:</p>
+
+<pre><code class="language-bash">$ kubectl get --raw /api/v1/nodes/ip-172-31-21-234.eu-west-1.compute.internal/proxy/stats/summary | jq '.node.runtime.imageFs'
+{
+  "time": "2024-03-11T10:59:56Z",
+  "availableBytes": 17310752768,
+  "capacityBytes": 21462233088,
+  "usedBytes": 1291296768,
+  "inodesFree": 10375082,
+  "inodes": 10484720,
+  "inodesUsed": 44497
+}
+
+</code></pre>
+
+<p>When using containerd as the common container runtime environment (such as Amazon EKS), it defaults to using <code>/var/lib/containerd</code> as the primary location for imageFS:</p>
+
+<pre><code class="language-bash">$ head /etc/containerd/config.toml
+version = 2
+root = "/var/lib/containerd"
+state = "/run/containerd"
+
+</code></pre>
+
+<p>(For more details about the location of imageFS, a recent article on the Kubernetes Blog describes the problem of disk storage exhaustion for different Container runtimes corresponding to imageFS, and suggests separating file system locations <sup id="fnref:k8s-blog-separate-imagefs" role="doc-noteref"><a href="#fn:k8s-blog-separate-imagefs" class="footnote" rel="footnote">6</a></sup>, but we won’t go into details here)</p>
+
+<p>If it’s a CRI, you can try using the CRI command-line tool to understand the imageFS mount location used by Container Runtime:</p>
+
+<pre><code class="language-bash">$ sudo crictl imagefsinfo
+{
+  "status": {
+    "imageFilesystems": [
+      {
+        "timestamp": "1710154476577999227",
+        "fsId": {
+          "mountpoint": "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs"
+        },
+        "usedBytes": {
+          "value": "1291296768"
+        },
+        "inodesUsed": {
+          "value": "44497"
+        }
+      }
+    ],
+    "containerFilesystems": []
+  }
+}
+
+</code></pre>
+
+<p>Therefore, we can infer that kubelet fetches the capacity and available values from imageFS (whether it’s CRI or cadvisor), and from the above settings, we can also deduce that in my environment, the storage location corresponding to imageFS is <code>/var/lib/containerd</code> (containerd). This implies that the space for container images may be shared with the system’s mount location. For instance, the following is the output of my system space, you can try to calculate the obtained value and see if it matches with the value obtained from <code>df</code>:</p>
+
+<pre><code class="language-bash">$ df
+Filesystem     1K-blocks    Used Available Use% Mounted on
+devtmpfs         1962632       0   1962632   0% /dev
+tmpfs            1971680       0   1971680   0% /dev/shm
+tmpfs            1971680    1696   1969984   1% /run
+tmpfs            1971680       0   1971680   0% /sys/fs/cgroup
+/dev/nvme0n1p1  20959212 4054180  16905032  20% /
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6d62590341a08f4066c168f2d00118ac5aade67ceb2797c0d88f97cbe825e302/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6f3f7200edfeb3129b765652da98f14009597d26bfcc7973232984ea431e67a7/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/7c9b3b1b9853dcdccdcc18e99ca89caeac236150df67881dd054651339038efc/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/38935dde2e2d40d73d039befc1283e165284269f7bb11002fd3937c274998fb5/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6fb8c888e2fa36a1ac909909dad4d4f5d520f48eb42731353f176f6e9dd76f03/shm
+tmpfs             394336       0    394336   0% /run/user/1000
+
+</code></pre>
+
+<ul>
+  <li><code>/var/lib/containerd</code> does not separate different file systems, so it shares the corresponding space of <code>/</code></li>
+  <li>The <code>Available</code> value of the root directory position is <code>16905032 KiB</code>, which is the same as the value of <code>imageFs.availableBytes</code> obtained by kubelet (<code>17310752768</code>). Since the unit obtained by kubelet is <code>Byte</code>, it is <code>17310752768 (imageFs.availableBytes) / 1024 = 16905032 KiB</code> (approximately 17 G) after conversion to <code>KiB</code></li>
+  <li>The total space size of the mount point <code>/</code> is <code>1K-block</code> value (<code>20959212 KiB</code>), which is equivalent to the converted <code>21462233088 (imageFs.capacityBytes) / 1024 = 20959212 KiB</code> value (approximately 20 G)</li>
+</ul>
+
+<p>After knowing how kubelet obtains the available space and relevant values of imageFS and according to the implementation of kubelet’s core code, we know that in the above execution environment, whether the space usage exceeds the threshold defined by <code>--image-gc-high-threshold</code> (default is 85%) can be known from the following result:</p>
+
+<pre><code class="language-bash"># usagePercent := 100 - int(available*100/capacity)
+# approximately equals 20%
+usagePercent = 100 - (17310752768 * 100 / 21462233088)
+
+</code></pre>
+
+<p>Since the imageFS in my environment shares space with <code>/</code>, this value is close to the percentage provided by <code>df</code> and can be used as a reference value.</p>
+
+<p>Therefore, in my example, this status is not enough to trigger Garbage Collection and clear some container images. A further step may trigger Pod eviction operations to stop and remove some Pods based on the parameter <code>--eviction-hard</code> (eviction conditions) of Hard Eviction Threshold, such as <code>imagefs.available&lt;15%</code> <sup id="fnref:node-pressure-eviction" role="doc-noteref"><a href="#fn:node-pressure-eviction" class="footnote" rel="footnote">7</a></sup>.</p>
+
+<h3 id="how-to-monitor-imagefs-usage">How to Monitor imageFS Usage</h3>
+
+<p>After understanding the operation mechanism and calculation method of kubelet, we can implement a simple Shell Script to obtain the storage space and usage rate overview of imageFS for each node, for example:</p>
+
+<pre><code class="language-bash">nodes=$(kubectl get no -o=jsonpath='{.items[*].metadata.name}')
+
+for node in $nodes; do
+    imageFS=$(kubectl get --raw "/api/v1/nodes/$node/proxy/stats/summary"  | jq .node.runtime.imageFs)
+    available=$(echo $imageFS | jq '.availableBytes')
+    capacity=$(echo $imageFS | jq '.capacityBytes')
+
+    usagePercent=$((100 - $available * 100 / $capacity))
+
+    echo "Node: $node, Available: $(($available / 1024 / 1024)) MiB, Capacity: $(($capacity / 1024 / 1024)) MiB, Usage: $usagePercent%"
+done
+
+</code></pre>
+
+<p>However, in the general situation where imageFS and the main mounting position are shared, to monitor whether the usage space is tight and further trigger Garbage Collection, in addition to the simple implementation above, it can also be completed through common monitoring, for example, the usage percentage data seen in the above <code>df</code> can be used as a reference. Alternatively, if a common tool like Prometheus Node Exporter has been introduced into the monitoring system that provides related filesystem functions (for example, you can define <code>--collector.filesystem.mount-points-exclude</code> to decide which mount points to exclude from monitoring), it can specifically convert filesystem data into numerical form for further monitoring.</p>
+
+<h2 id="conclusion">Conclusion</h2>
+
+<p>This article deeply explored the Garbage Collection mechanism of Kubernetes and how to monitor the usage of imageFS. After understanding the Garbage Collection of Kubernetes and how to monitor the usage of imageFS, we can have a more comprehensive understanding of the monitoring and resource usage of the Kubernetes environment. Proper resource management can ensure the stability and performance of the system and avoid unexpected service interruptions due to resource exhaustion.</p>
+
+<h2 id="references">References</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:k8s-1-29-image-gc-manager" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/v1.29.0/pkg/kubelet/images/image_gc_manager.go#L319-L360">Kubernetes v1.29.0 - image_gc_manager.go</a> <a href="#fnref:k8s-1-29-image-gc-manager" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-1-29-cri-stats-provider" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/v1.29.0/pkg/kubelet/stats/cri_stats_provider.go#L387-L425">Kubernetes v1.29.0 - cri_stats_provider.go</a> <a href="#fnref:k8s-1-29-cri-stats-provider" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-1-29-cadvisor-stats-provider" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/3f7a50f38688eb332e2a1b013678c6435d539ae6/pkg/kubelet/stats/cadvisor_stats_provider.go#L241-L322">Kubernetes v1.29.0 - cadvisor_stats_provider.go</a> <a href="#fnref:k8s-1-29-cadvisor-stats-provider" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:feature-gate" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features">Kubernetes Feature Gates</a> <a href="#fnref:feature-gate" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubelet-metric-data" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/reference/instrumentation/node-metrics/#:~:text=The%20kubelet%20gathers%20metric%20statistics,via%20the%20Kubernetes%20API%20server">Kubelet Node Metric</a> <a href="#fnref:kubelet-metric-data" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-blog-separate-imagefs" role="doc-endnote">
+      <p><a href="https://kubernetes.io/blog/2024/01/23/kubernetes-separate-image-filesystem/">Image Filesystem: Configuring Kubernetes to store containers on a separate filesystem</a> <a href="#fnref:k8s-blog-separate-imagefs" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:node-pressure-eviction" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/#hard-eviction-thresholds">Node-pressure Eviction Hard eviction thresholds</a> <a href="#fnref:node-pressure-eviction" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Kubernetes" /><summary type="html"><![CDATA[How does the kubelet trigger the Garbage Collection mechanism? In this article, we delve into the Kubernetes Garbage Collection and understand how kubelet implements the image cleanup mechanism. Additionally, we will also explore how to monitor imageFS usage accurately.]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry><title type="html">Recover cluster permission with EKS Access Entry</title><link href="https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry/" rel="alternate" type="text/html" title="Recover cluster permission with EKS Access Entry" /><published>2024-02-25T00:00:00+00:00</published><updated>2024-02-25T00:00:00+00:00</updated><id>https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry</id><content type="html" xml:base="https://easontechtalk.com/recover-permission-using-eks-cluster-access-entry/"><![CDATA[<p>In the past, granting access permissions to Amazon Elastic Kubernetes Service (EKS) clusters typically relied on a combination of AWS IAM Authenticator and the aws-auth ConfigMap. However, this method of management could encounter limitations and issues such as formatting errors, difficulties with automated updates, and the accidental deletion of IAM users.</p>
+
+<p>To address these issues, EKS has released a new authentication method — <strong>EKS Access Entry</strong>, offering an optimized solution. EKS Access Entry simplifies the management configuration of the aws-auth ConfigMap and can even restore access permissions to EKS clusters in certain scenarios.</p>
+
+<h2 id="why-is-this-feature-so-important">Why is this feature so important?</h2>
+
+<p>Previously, Amazon EKS integrated IAM as the primary identity authentication system. However, the authentication still relied on AWS IAM Authenticator running in EKS for verification, and this authentication mechanism needed to be managed through the aws-auth ConfigMap. Typically, this workflow isn’t a significant issue, but with the increase in different EKS usage scenarios, several limitations and problems have arisen:</p>
+
+<ul>
+  <li>Directly editing the aws-auth ConfigMap often encounters formatting issues, such as indentation errors, incorrect syntax and formatting, inconsistencies between the new version of yaml and the current online environment, and overwriting of past settings by the new yaml file. Any of these could inadvertently cause disaster.</li>
+  <li>Integrating the CI/CD pipeline to achieve automated updates requires updates to Kubernetes resources (aws-auth ConfigMap). Whether using AWS Lambda, Terraform, CloudFormation, or CDK, in the past, it was necessary to call the Kubernetes API to achieve resource control updates. This could not be accomplished through the APIs provided by AWS EKS itself for automation and permission management. Meanwhile, under the stricter security management of Kubernetes Role-Based Access Control (RBAC) clusters, developers in the team with limited Kubernetes user identities may struggle to update the aws-auth ConfigMap through the Kubernetes API.</li>
+  <li>The IAM user who initially created the EKS Cluster gets deleted, preventing the team from accessing the EKS Cluster. This is a common occurrence when integrating AWS Single-Sign On (AWS SSO) or when a colleague leaves the company. Even AWS’s Root account cannot restore access permissions to the Kubernetes Cluster.</li>
+</ul>
+
+<p>To solve this problem, we can introduce EKS Access Entry to optimize EKS cluster permission management and even rescue and restore cluster access permissions in the above scenarios. EKS Access Entry is a solution that allows administrators to restore access to EKS clusters without needing an IAM user.</p>
+
+<h2 id="digging-deeper-into-the-new-features-of-eks-access-entry">Digging Deeper into the New Features of EKS Access Entry</h2>
+
+<p>EKS Access Entry is a new solution for managing Amazon EKS cluster access permissions. It offers an optimized way to manage cluster authentication modes and access policies, and it addresses the limitations and problems encountered when using IAM Authenticator and aws-auth ConfigMap to manage access permissions.</p>
+
+<p>By default, when creating an EKS cluster, the operation to create the EKS Cluster is automatically assigned to an IAM identity in Kubernetes’s Role-Based Access Control (RBAC) to create rules and a Kubernetes User, and to assign the <code>system:master</code> operating identity.</p>
+
+<h3 id="what-is-kubernetes-role-based-access-control-rbac">What is Kubernetes Role-Based Access Control (RBAC)?</h3>
+
+<p>Kubernetes Role-Based Access Control (RBAC) is a mechanism for implementing authorization and permission management in Kubernetes clusters. Using RBAC, you can define roles and role bindings to grant specific permissions on cluster resources to users or service accounts.</p>
+
+<h3 id="default-eks-authentication">Default EKS Authentication</h3>
+
+<p>Looking back at what was mentioned earlier, in EKS, the default is only to give the IAM identity that created the EKS Cluster (for example: <code>arn:aws:iam::123456789:user/eason</code>) the <code>system:master</code> group operating identity. If you want to allow a new IAM user (for example: <code>arn:aws:iam::123456789:user/developer</code>) to operate the EKS Cluster, <strong>setting any IAM policy in the IAM console cannot grant any access permissions to the EKS Cluster</strong>. Instead, you need to update the <code>aws-auth</code> ConfigMap resource to grant access to other IAM identities:</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/auth-workflow.png" alt="EKS authentication workflow" /></p>
+
+<p>For example: To grant my IAM user access to the EKS Cluster, you can add a <code>mapUsers</code> block to the <code>aws-auth</code> ConfigMap using the kubectl command, which includes a specified user’s ARN (<code>arn:aws:iam::123456789:user/developer</code>), and associates the <code>system:master</code> group, indicating that the <code>developer</code> user now has access to the EKS Cluster.</p>
+
+<pre><code class="language-bash">$ kubectl get cm/aws-auth -o yaml -n kube-system
+apiVersion: v1
+data:
+  mapRoles: |
+    - groups:
+      - system:bootstrappers
+      - system:nodes
+      rolearn: arn:aws:iam::123456789:role/EKSManagedNodeWorkerRole
+      username: system:node:
+  mapUsers: |
+    - groups:
+      - system:masters
+      userarn: arn:aws:iam::123456789:user/developer
+      username: developer
+
+</code></pre>
+
+<h3 id="changes-in-cluster-authentication-mode-after-supporting-eks-access-entry">Changes in Cluster Authentication Mode after Supporting EKS Access Entry</h3>
+
+<p>This update supports EKS Clusters of the following Kubernetes and platform versions:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Kubernetes version</th>
+      <th>Platform version</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1.28</td>
+      <td>eks.6</td>
+    </tr>
+    <tr>
+      <td>1.27</td>
+      <td>eks.10</td>
+    </tr>
+    <tr>
+      <td>1.26</td>
+      <td>eks.11</td>
+    </tr>
+    <tr>
+      <td>1.25</td>
+      <td>eks.12</td>
+    </tr>
+    <tr>
+      <td>1.24</td>
+      <td>eks.15</td>
+    </tr>
+    <tr>
+      <td>1.23</td>
+      <td>eks.17</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Two different authentication modes can be supported:</p>
+
+<ol>
+  <li><strong>IAM Cluster Authentication Mode</strong>: This is the default authentication mode of Amazon EKS, which is based on IAM for identity authentication and relies on the <code>aws-auth</code> ConfigMap.</li>
+  <li><strong>EKS Cluster Authentication Mode (Access Entry)</strong>: This is a new authentication mode introduced by EKS Access Entry. It is based on Kubernetes’s native identity authentication mechanism but is completed via EKS’s own API, making it possible to permit an IAM User/Role operation with a few clicks on the EKS console interface.</li>
+</ol>
+
+<p>In newly created EKS Clusters, you may notice the update of the following options:</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png" alt="EKS authentication modes" /></p>
+
+<h2 id="eks-access-entry-authentication-method">EKS Access Entry Authentication Method</h2>
+
+<h3 id="prerequisites">Prerequisites</h3>
+
+<p>Before using EKS Access Entry, ensure that the following prerequisites are met:</p>
+
+<ul>
+  <li>Your Amazon EKS cluster has the EKS Access Entry feature enabled (as mentioned earlier, the authentication mode supports EKS API and not just ConfigMap).</li>
+  <li>You have the appropriate IAM permissions to perform operations related to EKS Access Entry (for example: <code>eks:CreateAccessEntry</code>, <code>eks:AssociateAccessPolicy</code>, <code>eks:DeleteAccessEntry</code>, <code>eks:DescribeAccessEntry</code>, etc.).</li>
+</ul>
+
+<p>After enabling Access Entry authentication, you can use this new authentication method to manage cluster access permissions.</p>
+
+<h3 id="access-policy-access-permissions">Access Policy Access Permissions</h3>
+
+<p>Each access entry has an associated access policy that defines access permissions to cluster resources. Access policies use the JSON format of AWS Identity and Access Management (IAM) for definition. The following are examples of access policies:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Access Policy</th>
+      <th>Description</th>
+      <th>Kubernetes verb</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>AmazonEKSAdminPolicy</td>
+      <td>Full administration permissions</td>
+      <td>*</td>
+    </tr>
+    <tr>
+      <td>AmazonEKSClusterAdminPolicy</td>
+      <td>Cluster administration permissions</td>
+      <td>-</td>
+    </tr>
+    <tr>
+      <td>AmazonEKSEditPolicy</td>
+      <td>Read-write permissions</td>
+      <td>create, update, delete, get, list</td>
+    </tr>
+    <tr>
+      <td>AmazonEKSViewPolicy</td>
+      <td>Read-only permissions</td>
+      <td>get, list</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The above table may vary with version updates, for details, please refer to [access-policy-permissions].</p>
+
+<h2 id="implementing-and-using-eks-access-entry-to-manage-or-restore-eks-cluster-access-permissions">Implementing and Using EKS Access Entry to Manage or Restore EKS Cluster Access Permissions</h2>
+
+<p>In situations where the IAM user who initially created the EKS Cluster gets deleted, preventing the team from accessing the EKS Cluster, if the current IAM User/Role has the operating permissions of Access Entry, then access permissions to the EKS Cluster can be restored (or revoked) through this feature. EKS Access Entry can be operated through AWS CLI or AWS Management Console.</p>
+
+<p><strong>EKS Console (AWS Management Console)</strong></p>
+
+<p>(1) On the EKS cluster details page, click the “Access” option.</p>
+
+<p>(2) On the “IAM Access Entries” page, click the “Create access entry” button in the upper right corner.</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/create-access-entry.png" alt="Create EKS Access Entry" /></p>
+
+<p>(3) In the “Create access entry” dialog box, enter the following information:</p>
+
+<ul>
+  <li>IAM Principal ARN: Specify the ARN of the IAM User or IAM Role.</li>
+  <li>Kubernetes groups: This field is used to associate the IAM User/Role with the Kubernetes Group (Role &amp; Rolebinding) that is predefined in Kubernetes RBAC. If you want to directly associate the predefined Access Entry Policy (for example: <code>AmazonEKSClusterAdminPolicy</code>), you can skip this.</li>
+  <li>Kubernetes username: The username you want this IAM user or role to have in Kubernetes. You can enter the name you want here or leave it blank. For example, <code>admin</code>.</li>
+</ul>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/config-iam-access-entry.png" alt="Configure IAM Access Entry" /></p>
+
+<p>(4) In this step, you can choose the default Access Entry to grant IAM identity access permissions to the EKS Cluster. For example: <code>arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy</code>.</p>
+
+<ul>
+  <li>Access Scope: Used to grant the scope of influence of the associated policy, for example, specifying that the IAM
+User or Role should have permissions to all namespaces or to a specific namespace.</li>
+</ul>
+
+<p>(5) Click “Add Policy” to associate the policy。</p>
+
+<p><img src="/assets/images/2024/recover-permission-using-eks-cluster-access-entry/access-policy.png" alt="設定 Access Policy" /></p>
+
+<p><strong>AWS CLI</strong></p>
+
+<p>Alternatively, you can use the AWS CLI to create an access entry. Below are the steps to use AWS CLI to add a Cluster Admin to the EKS cluster via EKS Access Entry (using ‘eks-cluster’ as an example for the cluster name):</p>
+
+<p>(1) Update your EKS cluster configuration to enable EKS Access Entry authentication mode (if you’ve already done this step, you can skip it).</p>
+
+<pre><code class="language-bash">aws eks update-cluster-config \
+          --name eks-cluster  \
+          --access-config authenticationMode=API_AND_CONFIG_MAP
+</code></pre>
+
+<p>(2) Create an Access Entry, and specify the IAM principal ARN (e.g., IAM User or IAM Role, here we use <code>arn:aws:iam::0123456789012:role/eks-admin</code> as an example)</p>
+
+<pre><code class="language-bash"> aws eks create-access-entry \
+  --cluster-name eks-cluster \
+  --principal-arn "arn:aws:iam::0123456789012:role/eks-admin"
+</code></pre>
+
+<p>(3) Associate the access policy with the Access Entry you just created. Here we use <code>AmazonEKSAdminPolicy</code> (which provides full administrative permissions) as an example.</p>
+
+<pre><code class="language-bash"> aws eks associate-access-policy \
+  --cluster-name eks-cluster \
+  --principal-arn "arn:aws:iam::0123456789012:role/eks-admin" \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy \
+  --access-scope '{"type": "cluster"}
+
+</code></pre>
+
+<p>After completing the above steps, you have successfully added a Cluster Admin to the EKS cluster via EKS Access Entry.</p>
+
+<p><strong>Other Permission Settings</strong></p>
+
+<p>Another use case is to link the EKS Access Entry feature with Kubernetes RBAC’s own permissions.</p>
+
+<p>For instance, we can create a Kubernetes Cluster called ‘pod-and-config-viewer’, and grant this role the permission to view Kubernetes Pods.</p>
+
+<pre><code class="language-yaml">apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pod-viewer-role
+rules:
+  - apiGroups: ['']
+    resources: ['pods', 'pods/log']
+    verbs: ['list', 'get', 'watch']
+
+</code></pre>
+
+<p>Then, we bind this role to the ‘pod-viewers’ group.</p>
+
+<p>Note: The Kubernetes Group (‘pod-viewers’) does not need to be created in advance.</p>
+
+<pre><code class="language-bash">kubectl create clusterrolebinding pod-viewer \
+  --clusterrole=pod-viewer-role \
+  --group=pod-viewers
+</code></pre>
+
+<p>Finally, you can directly use the corresponding feature of EKS Access Entry to associate the IAM role <code>arn:aws:iam::0123456789012:role/eks-pod-viewer</code> with the Kubernetes group <code>pod-viewers</code>, further enhancing the flexibility of permission settings.</p>
+
+<pre><code class="language-bash">aws eks create-access-entry \
+  --cluster-name eks-cluster \
+  --principal-arn "arn:aws:iam::0123456789012:role/eks-pod-viewer" \
+  --kubernetes-group pod-viewers
+</code></pre>
+
+<h2 id="summary">Summary</h2>
+
+<p>The release of EKS Access Entry introduces a new, more flexible mechanism for managing access permissions to EKS clusters. By integrating directly with Kubernetes’s native identity authentication mechanism and providing a straightforward user interface, it simplifies the process of managing IAM users and roles. Moreover, in scenarios where access to the EKS Cluster is lost due to the deletion of the IAM user who initially created it, EKS Access Entry can restore access permissions, providing a safety net for teams using EKS.</p>
+
+<p>It is important to note that EKS Access Entry doesn’t replace the use of the <code>aws-auth</code> ConfigMap, but provides an additional, more flexible way to manage access permissions. This feature is currently supported in EKS clusters of Kubernetes version 1.23 and higher. For more information, refer to the official AWS documentation.</p>
+
+<h2 id="reference">Reference</h2>]]></content><author><name>eason</name></author><category term="Amazon Elastic Kubernetes Service (EKS)" /><category term="Kubernetes" /><summary type="html"><![CDATA[In the past, granting access permissions to Amazon Elastic Kubernetes Service (EKS) clusters typically relied on a combination of AWS IAM Authenticator and the aws-auth ConfigMap. However, this method of management could encounter limitations and issues such as formatting errors, difficulties with automated updates, and the accidental deletion of IAM users.]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2024/recover-permission-using-eks-cluster-access-entry/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry><title type="html">Utilize EKS Cluster Health Status to monitor your cluster</title><link href="https://easontechtalk.com/utilize-eks-cluster-health-status/" rel="alternate" type="text/html" title="Utilize EKS Cluster Health Status to monitor your cluster" /><published>2024-01-27T00:00:00+00:00</published><updated>2024-01-27T00:00:00+00:00</updated><id>https://easontechtalk.com/utilize-eks-cluster-health-status</id><content type="html" xml:base="https://easontechtalk.com/utilize-eks-cluster-health-status/"><![CDATA[<p>As an AWS user, it is crucial to monitor the health status of your Elastic Kubernetes Service (EKS) cluster to ensure its stability and performance. By keeping a close eye on your cluster’s health issue report, you can proactively address any issues and maintain the overall health of your Kubernetes cluster. In the past, there’s no such way to let you understand what things could potentially break your EKS cluster until you hit some issue (e.g. Unable to upgrade the cluster). But recently Amazon EKS introduced a small change of cluster-related health details in the EKS console and API, providing administrators enhanced visibility into the health of their clusters.</p>
+
+<h2 id="whats-the-change">What’s the change?</h2>
+
+<p>On December 28, 2023, Amazon EKS announced now it surfaces cluster health status details.<sup id="fnref:whats-new-eks-surfaces-cluster-health-status-details" role="doc-noteref"><a href="#fn:whats-new-eks-surfaces-cluster-health-status-details" class="footnote" rel="footnote">1</a></sup></p>
+
+<p>The cluster health status information helps customers to quickly diagnose, troubleshoot, and remedy issues with their clusters, enabling them to run more up-to-date and secure application environments.</p>
+
+<p>Because the underlying infrastructure or configuration issues may lead to impaired EKS clusters and prevent EKS from applying updates or upgrading to newer Kubernetes versions. EKS users have responsible for configuring cluster infrastructure such as IAM roles and EC2 subnets. This change reduces the time administrators need to spend troubleshooting infrastructure health issues, making it easier to run secure Kubernetes environments.</p>
+
+<p>In this blog post, we will discuss what’s new and how you can utilize the EKS cluster health status to monitor your EKS cluster effectively.</p>
+
+<h2 id="monitoring-the-health-status-of-your-eks-cluster">Monitoring the Health Status of your EKS Cluster</h2>
+
+<h3 id="benefits-of-monitoring-eks-cluster-health-status">Benefits of Monitoring EKS Cluster Health Status</h3>
+
+<p>Monitoring the health status of your EKS cluster offers several benefits. It allows you to stay informed about the overall health and performance of your cluster. By receiving real-time notifications, you can quickly identify any issues or potential problems and take immediate action to resolve them. This proactive approach helps prevent downtime and ensures the smooth functioning of your EKS cluster.</p>
+
+<h3 id="describecluster-api-call">DescribeCluster API Call</h3>
+
+<p>The first method to monitor the health status of your EKS cluster is by utilizing the <code>DescribeCluster</code> API call. This API call adds new field to retrieve detailed information about your cluster, including its current status, several different error code<sup id="fnref:api-cluster-issue-contents" role="doc-noteref"><a href="#fn:api-cluster-issue-contents" class="footnote" rel="footnote">2</a></sup>, and any ongoing issues. By making use of this API call, you can gain insights into the health and performance of your cluster.</p>
+
+<pre><code class="language-bash">$ aws eks describe-cluster --name eks --region eu-west-1
+{
+    "cluster": {
+        "name": "eks",
+        "arn": "arn:aws:eks:eu-west-1:11222334455:cluster/eks",
+        "createdAt": "2024-01-23T20:51:44.751000+00:00",
+        "version": "1.27",
+    }
+    "health": {
+            "issues": []
+        }
+    }
+}
+</code></pre>
+
+<p>By leveraging either the DescribeCluster API call or the EKS Console, you can stay informed about the health status of your EKS cluster. This enables you to take immediate action in case of any issues or potential problems, ensuring the smooth operation of your applications.</p>
+
+<h3 id="eks-console">EKS Console</h3>
+
+<p>You can also monitor the health status of your EKS cluster is through the EKS Console. The EKS Console adds new section to provide the health status of your cluster. With the EKS Console, you can easily navigate through different sections and obtain real-time information about your cluster’s health.</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/cover.png" alt="Cluster health issue details on EKS console" /></p>
+
+<h2 id="integrate-slack-notification-for-monitoring">Integrate Slack notification for Monitoring</h2>
+
+<p>Currently, the EKS Cluster doesn’t onboard proactive notification or CloudWatch event, which means you need to check the status by calling API manually. To set up monitoring for your EKS cluster health status and receive notification, you can consider integrating EventBridge with your cluster. EventBridge is a serverless event bus service provided by AWS, which allows you to route events between different AWS services and external applications, or even set up schedule event to trigger action. By configuring EventBridge to trigger a Lambda function and monitor the <code>DescribeCluster</code> API call, you can receive real-time notifications whenever there are changes or updates to your cluster’s health status.</p>
+
+<p>Below is the simple solution I have implemented:</p>
+
+<h3 id="solution-overview">Solution overview</h3>
+
+<ul>
+  <li>Create a Lambda function (<strong>MoninitorEKSClusterHealth</strong>) and utilize the <code>DescribeCluster</code> API call</li>
+  <li>Associate Slack Channel with AWS Bot and create a SNS topic for notification</li>
+  <li>Use EventBridge Scheduler to schedule cron job for invoking the Lambda function (<strong>MoninitorEKSClusterHealth</strong>) regularly. If the cluster has health issue, it throw the error in the execution.</li>
+  <li>Create CloudWatch alarm to monitor Lambda function (<strong>MoninitorEKSClusterHealth</strong>) error and trigger SNS for real-time Slack notifications</li>
+</ul>
+
+<p><strong>Create a Lambda function</strong></p>
+
+<p>The first step is to have Lambda function can help us interpret the cluster health status and capture any error, below is an example by using Python:</p>
+
+<pre><code class="language-python">import json
+import boto3
+
+def describe_eks_cluster(cluster_name):
+    eks_client = boto3.client('eks')
+    response = eks_client.describe_cluster(name=cluster_name)
+    health_issues = response['cluster']['health']['issues']
+
+    if len(health_issues) &gt; 0:
+        raise Exception("Cluster has health issues: {0}".format(health_issues))
+
+    return response
+
+def lambda_handler(event, context):
+    cluster_name = event['eks-cluster-name']
+    cluster_info = ''
+
+    cluster_info = describe_eks_cluster(cluster_name)
+    print(cluster_info)
+
+    return {
+        'statusCode': 200,
+        'body': 'success'
+    }
+</code></pre>
+
+<p>When there’s a cluster health issue, the API will response the details in the health issue field. For example, below is an error that captured from CloudWatch Log group of my <strong>MoninitorEKSClusterHealth</strong> function. <em>**</em>It indicates that there is an exception in the code related to a cluster’s health issues. The specific error is <code>Ec2SecurityGroupNotFound</code> which means that one or more security groups associated with the cluster could not be found.</p>
+
+<pre><code class="language-python">[ERROR] Exception: Cluster has health issues:
+
+['code': 'Ec2SecurityGroupNotFound',
+ 'message': "We couldn't find one or more security group associated with your cluster. Call eks update-cluster-config API to update subnets.",
+ 'resourceIds': ['sg-XXXXXXX']
+Traceback (most recent call last):
+File "/var/task/Lambda_function.py", line 18, in lambda_handler
+cluster_info = describe_ eks_cluster(cluster_name)
+File "/var/task/lambda_function.py", line 10, in describe_eks_cluster raise Exception("Cluster has health issues: {01" format(health_issues))
+</code></pre>
+
+<p>The exception throwing for existing health issue by the python code is the key, as it can generate an error for CloudWatch metric of AWS Lambda, which can be monitored by creating an CloudWatch alarm.</p>
+
+<p><strong>Create a schedule in AWS EventBridge Scheuler</strong></p>
+
+<p>The next step in monitoring the health status of your EKS cluster is to create a schedule in AWS EventBridge Scheduler. In my environment I pass the parameter <code>eks-cluster-name</code> to let the scheduled job knowing which cluster I want to check when invoking my function. By configuring a cron job to regularly invoke the Lambda function, you can ensure that the health status of your cluster is checked at specified intervals.</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/eventbridge-create-schedule.png" alt="Set up a schedule to regularly invoke Lambda function" /></p>
+
+<p><strong>Set up an CloudWatch Alarm</strong></p>
+
+<p>Once we have a Lambda function to report the cluster health and will be triggered regularly, we can set up an CloudWatch Alarm and only monitor this Lambda function to capture error. In my case I simply set up an alarm to monitor <code>Erros</code>  metric under <code>AWS/Lambda</code> namespace for my function (<strong>MoninitorEKSClusterHealth</strong>):</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/cw-alarm.png" alt="Alarm when the cluster has health issue" /></p>
+
+<p>In case the cluster has any health issues, the Lambda function will throw an error during execution, and CloudWatch alarm will flip to <code>In alarm</code> state, triggering real-time Slack notifications via CloudWatch alarms and SNS topics. In my account, I already have AWS Bot (Slack chatbot) configured and subscribed it a SNS topic<sup id="fnref:set-up-aws-chat-bot" role="doc-noteref"><a href="#fn:set-up-aws-chat-bot" class="footnote" rel="footnote">3</a></sup>. This allows me can stay updated and take immediate action to resolve any problems with my EKS cluster.</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/slack-execution.png" alt="AWS Chatbot send Slack notification for the alarm" /></p>
+
+<p>The AWS Chatbot also provides capability to view the error logs of the Lambda function, this could be very useful and easily access more information to understand why the cluster is having health issue:</p>
+
+<p><img src="/assets/images/2024/utilize-eks-cluster-health-status/slack-execution-details.png" alt="View error in Slack" /></p>
+
+<h2 id="conclusion">Conclusion</h2>
+
+<p>In conclusion, monitoring the health status of your EKS cluster is crucial for maintaining its stability, performance, and security. By utilizing the <code>DescribeCluster</code> API call or the EKS Console, you can stay informed about the health status of your cluster and take prompt action when needed. Additionally, integrating EventBridge can enhance your monitoring capabilities and provide real-time notifications. This post walk through the feature by utilizing the <code>DescribeCluster</code> API call and share how to receive real-time notifications about your cluster’s health status and take immediate action when needed.</p>
+
+<p>Start monitoring your EKS cluster’s health status today to ensure the optimal functioning of your applications.</p>
+
+<h2 id="reference">Reference</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:whats-new-eks-surfaces-cluster-health-status-details" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/about-aws/whats-new/2023/12/amazon-eks-surfaces-cluster-health-status-details/">Amazon EKS now surfaces cluster health status details</a> <a href="#fnref:whats-new-eks-surfaces-cluster-health-status-details" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:api-cluster-issue-contents" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/APIReference/API_ClusterIssue.html#API_ClusterIssue_Contents">Amazon EKS API Reference - ClusterIssue</a> <a href="#fnref:api-cluster-issue-contents" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:set-up-aws-chat-bot" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/chatbot/latest/adminguide/slack-setup.html">Set up AWS Chatbot - Get started with Slack</a> <a href="#fnref:set-up-aws-chat-bot" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Kubernetes Service (EKS)" /><category term="Kubernetes" /><summary type="html"><![CDATA[As an AWS user, it is crucial to monitor the health status of your Elastic Kubernetes Service (EKS) cluster to ensure its stability and performance. By keeping a close eye on your cluster’s health issue report, you can proactively address any issues and maintain the overall health of your Kubernetes cluster. In the past, there’s no such way to let you understand what things could potentially break your EKS cluster until you hit some issue (e.g. Unable to upgrade the cluster). But recently Amazon EKS introduced a small change of cluster-related health details in the EKS console and API, providing administrators enhanced visibility into the health of their clusters.]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2024/utilize-eks-cluster-health-status/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2024/utilize-eks-cluster-health-status/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry><title type="html">Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error</title><link href="https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/" rel="alternate" type="text/html" title="Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error" /><published>2023-06-03T00:00:00+00:00</published><updated>2023-06-03T00:00:00+00:00</updated><id>https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error</id><content type="html" xml:base="https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/"><![CDATA[<p>Amazon Elastic Kubernetes Service (EKS) is a managed Kubernetes service that allows many Kubernetes administrators to quickly create and easily run Kubernetes clusters on AWS in a matter of minutes via commands, simplifying many operations. In 2019, EKS released new API support for Managed Node Groups <sup id="fnref:eks-managed-nodegroup" role="doc-noteref"><a href="#fn:eks-managed-nodegroup" class="footnote" rel="footnote">1</a></sup>, which can automatically create and manage EC2 instances and add them to Kubernetes clusters, making it easier for users to add and expand computational nodes required by Kubernetes clusters, and even upgrade node versions via API or one-click integration.</p>
+
+<p>However, during the process of adding or upgrading Managed Node Groups, it is possible to encounter the <code>Ec2SubnetInvalidConfiguration</code> error. Therefore, this article will further analyze the cause, common scenarios, and solutions of this error.</p>
+
+<h2 id="how-to-identify-this-issue">How to identify this issue?</h2>
+
+<p>To check whether there is an <code>Ec2SubnetInvalidConfiguration</code> error in EKS Managed Node Groups, you can confirm whether there are any health issues through the EKS Console or AWS CLI commands. For example, by clicking on the “Compute” tab under <code>Cluster</code> &gt; <code>Node groups</code> to enter the detailed page of the node group, you can check whether there is any error message in the <code>Health Issues</code> tab:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-create-failed.png" alt="Nodegroup create failed" /></p>
+
+<p>According to the EKS Managed Node Group upgrade process <sup id="fnref:eks-managed-nodegroup-update-behavior" role="doc-noteref"><a href="#fn:eks-managed-nodegroup-update-behavior" class="footnote" rel="footnote">2</a></sup>, if node upgrades or new nodes are stuck after 15-20 minutes, there may be some problems with the work nodes during operation, and there is an opportunity to further troubleshoot possible causes through this information after a period of time. The example below shows the use of AWS CLI commands:</p>
+
+<pre><code>$ aws eks describe-nodegroup --nodegroup-name broken-nodegroup --cluster eks --region eu-west-1
+{
+    "nodegroup": {
+        "nodegroupName": "broken-nodegroup",
+        "clusterName": "eks",
+        "version": "1.25",
+        "releaseVersion": "1.25.9-20230526",
+        "status": "CREATE_FAILED",
+        "capacityType": "ON_DEMAND",
+        "subnets": [
+            "subnet-AAAAAAAAAAAAAAAAA",
+            "subnet-BBBBBBBBBBBBBBBBB"
+        ],
+        "amiType": "AL2_x86_64",
+        "health": {
+            "issues": [
+                {
+                    "code": "Ec2SubnetInvalidConfiguration",
+                    "message": "One or more Amazon EC2 Subnets of [subnet-AAAAAAAAAAAAAAAAA, subnet-BBBBBBBBBBBBBBBBB] for node group broken-nodegroup does not automatically assign public IP addresses to instances launched into it. If you want your instances to be assigned a public IP address, then you need to enable auto-assign public IP address for the subnet. See IP addressing in VPC guide: &lt;https://docs.aws.amazon.com/vpc/latest/userguide/vpc-ip-addressing.html#subnet-public-ip&gt;",
+                    "resourceIds": [
+                        "subnet-AAAAAAAAAAAAAAAAA",
+                        "subnet-BBBBBBBBBBBBBBBBB"
+                    ]
+                }
+            ]
+        },
+        "updateConfig": {
+            "maxUnavailable": 1
+        },
+        ...
+    }
+}
+
+</code></pre>
+
+<p>The above example shows that when creating a node group, it failed and is in a <code>CREATE_FAILED</code> state.</p>
+
+<h2 id="common-scenarios-and-causes">Common scenarios and causes</h2>
+
+<p>According to the definition of error exceptions <sup id="fnref:eks-issues" role="doc-noteref"><a href="#fn:eks-issues" class="footnote" rel="footnote">3</a></sup>, it is easy to know that this error is usually caused by the subnet specified by EKS Managed Node Group not enabling auto-assign public IP address.</p>
+
+<p>By default, when Managed Node Groups create EC2 instances, they need to rely on the subnet itself to enable this function. If the subnet does not enable auto-assign public IP address, EC2 instances will not be able to obtain public IPv4 addresses and will be unable to communicate with the Internet, leading to this error. Therefore, this gives rise to two different usage scenarios: Public Subnet and Private Subnet.</p>
+
+<p>Public Subnet and Private Subnet refer to different subnets set in Amazon Virtual Private Cloud (VPC). Public Subnet means that resources in this subnet can communicate directly with the Internet and connect to the public Internet, while Private Subnet cannot communicate with the Internet directly:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/subnet-diagram.png" alt="Subnet diagram" /></p>
+
+<p>(Image Source: Amazon Virtual Private Cloud User Guide <sup id="fnref:subnet-diagram" role="doc-noteref"><a href="#fn:subnet-diagram" class="footnote" rel="footnote">4</a></sup>)</p>
+
+<p>In short, if a subnet has a route pointing to an Internet Gateway resource (<code>0.0.0.0/0</code>), it can usually be considered that this subnet will be able to directly connect to the Internet. Otherwise, this subnet is expected to exist in a limited and private network environment.</p>
+
+<h3 id="encountering-this-error-in-public-subnet">Encountering this error in Public Subnet</h3>
+
+<p>Previously, EKS would enable auto-assign public IPv4 addresses for all Node Groups under Managed Node Groups when creating them, regardless of whether they were in a Public Subnet or Private Subnet. However, this feature was updated in 2020 <sup id="fnref:eks-feature-request-607" role="doc-noteref"><a href="#fn:eks-feature-request-607" class="footnote" rel="footnote">5</a></sup>. Therefore, if you expect the EKS Managed Node Groups you deploy to be assigned public IPv4 addresses and allow direct connection to the Internet, you need to ensure that the Subnet you use to create or upgrade Managed Node Groups with Public Subnet enables auto-assign public IPv4 addresses (<code>MapPublicIpOnLaunch</code>):</p>
+
+<pre><code>$ aws ec2 describe-subnets --subnet-ids subnet-XXXXXXXXX
+"Subnets": [
+        {
+            "CidrBlock": "192.168.64.0/19",
+            "MapPublicIpOnLaunch": true,
+            "State": "available",
+            "SubnetId": "subnet-XXXXXXXXXXX",
+            "VpcId": "vpc-XXXXXXXXXXX",
+            ...
+        }
+    ]
+
+</code></pre>
+
+<h3 id="encountering-this-error-in-private-subnet">Encountering this error in Private Subnet</h3>
+
+<p>You may say, “I originally expected this subnet to be a Private Subnet, and maybe it was normal when I first created it.” You may wonder why EKS Managed Groups may report that the subnet specified by my Node Groups does not automatically associate public IPv4 addresses during runtime or upgrade.</p>
+
+<p>For Amazon EKS, the VPC associated subnet properties still apply to the principles mentioned earlier <sup id="fnref:eks-vpc-subnet-considerations" role="doc-noteref"><a href="#fn:eks-vpc-subnet-considerations" class="footnote" rel="footnote">6</a></sup>, so in many cases, this usually involves routing table settings related to the Subnet:</p>
+
+<ul>
+  <li>A public subnet is a subnet with a route table that includes a route to an Internet gateway, whereas a private subnet is a subnet with a route table that doesn’t include a route to an Internet gateway.</li>
+</ul>
+
+<p>For example, the following is an example of a node group in the environment that is in a <code>DEGRADED</code> state due to subnet configuration issues after running Node Groups for a period of time, and there is an error message:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-degraded.png" alt="Nodegroup degraded" /></p>
+
+<h2 id="solutions-and-steps">Solutions and Steps</h2>
+
+<h3 id="public-subnet">Public Subnet</h3>
+
+<p>To solve this problem, if you choose Public Subnet to deploy Managed Node Groups, you need to ensure that the Subnet enables the Auto-assign Public IP address function. <a href="https://docs.aws.amazon.com/vpc/latest/userguide/modify-subnets.html#subnet-public-ip">Refer to the following steps</a>:</p>
+
+<ol>
+  <li>Log in to the AWS Console and go to the <a href="https://console.aws.amazon.com/vpc/">VPC Management Console</a>.</li>
+  <li>Choose the Subnet you want to use &gt; Edit Subnet Settings, and select “Enable auto-assign public IPv4 address”.</li>
+  <li>Check the option and click Save.</li>
+</ol>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/enable-auto-assign-up-settings.png" alt="Enable auto assign settings" /></p>
+
+<p>After completing these steps, if the node status fails, you can delete the failed Managed Node Groups and create a new one again, selecting the above Subnet. When EKS starts these EC2 instances, they can obtain Public IP addresses correctly based on the Subnet settings.</p>
+
+<p>If the problem you encounter is not caused by the subnet not enabling auto-assign public IP address, please refer to the error information. <sup id="fnref:eks-issues:1" role="doc-noteref"><a href="#fn:eks-issues" class="footnote" rel="footnote">3</a></sup></p>
+
+<h3 id="private-subnet">Private Subnet</h3>
+
+<p>In the previous content, we described an error that can occur when encountering an expected private subnet. This is usually because EKS tries to start or check the subnet used by Managed Node Groups and assumes that the subnet belongs to the Public Subnet property due to the route pointing to the Internet Gateway, rather than the expected Private Subnet property, resulting in the following exception message:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/incorrect-private-subnet-route.png" alt="Incorrect private subnet route" /></p>
+
+<p>To resolve this issue, you can configure the Route Table corresponding to the Private Subnet correctly, preserve internal requests within the VPC, and set the correct non-VPC request routing (such as removing the Internet Gateway for the <code>0.0.0.0/0</code> route) to point to other targets such as the <a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html">NAT Gateway</a>, which provides the ability to access the internet only internally from outside, ensuring that the worker nodes can still download images from other sources (such as Docker Hub) and interact with the EKS API Server when starting up.</p>
+
+<h2 id="summary">Summary</h2>
+
+<p>In this content, we mentioned common scenarios and causes of the <code>Ec2SubnetInvalidConfiguration</code> error when creating or upgrading an EKS Managed Node Group. In the case of Public Subnets, it is necessary to ensure that the Subnet has the “Auto-assign Public IP address” feature enabled; in the case of Private Subnets, it is necessary to correctly configure the Route Table corresponding to the Private Subnet and keep the internal requests within the VPC, while setting the correct non-VPC request routing to other targets, such as NAT Gateway.</p>
+
+<p>By following the above solutions and related steps, we hope to help you, who are reading this content, to troubleshoot and solve this error more effectively, ensuring that the Managed Node Group runs smoothly.</p>
+
+<h2 id="reference-resources">Reference Resources</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:eks-managed-nodegroup" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/blogs/containers/eks-managed-node-groups/">Extending the EKS API: Managed Node Groups</a> <a href="#fnref:eks-managed-nodegroup" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-nodegroup-update-behavior" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/managed-node-update-behavior.html#managed-node-update-scale-up">Managed node update behavior - Scale up phase</a> <a href="#fnref:eks-managed-nodegroup-update-behavior" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-issues" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/APIReference/API_Issue.html">Amazon EKS resource Issue</a> <a href="#fnref:eks-issues" class="reversefootnote" role="doc-backlink">&#8617;</a> <a href="#fnref:eks-issues:1" class="reversefootnote" role="doc-backlink">&#8617;<sup>2</sup></a></p>
+    </li>
+    <li id="fn:subnet-diagram" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/vpc/latest/userguide/configure-subnets.html#subnet-diagram">Subnets for your VPC - Subnet diagram</a> <a href="#fnref:subnet-diagram" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-feature-request-607" role="doc-endnote">
+      <p><a href="https://github.com/aws/containers-roadmap/issues/607">[EKS] [request]: Remove requirement of public IPs on EKS managed worker nodes #607</a> <a href="#fnref:eks-feature-request-607" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-vpc-subnet-considerations" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/network_reqs.html#network-requirements-subnets">Amazon EKS VPC and subnet requirements and considerations - Subnet requirements and considerations</a> <a href="#fnref:eks-vpc-subnet-considerations" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Kubernetes Service (EKS)" /><category term="Kubernetes" /><summary type="html"><![CDATA[Amazon Elastic Kubernetes Service (EKS) is a managed Kubernetes service that allows many Kubernetes administrators to quickly create and easily run Kubernetes clusters on AWS in a matter of minutes via commands, simplifying many operations. In 2019, EKS released new API support for Managed Node Groups 1, which can automatically create and manage EC2 instances and add them to Kubernetes clusters, making it easier for users to add and expand computational nodes required by Kubernetes clusters, and even upgrade node versions via API or one-click integration. Extending the EKS API: Managed Node Groups &#8617;]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry><title type="html">Troubleshooting EKS Managed Node Group PodEvictionFailure Error</title><link href="https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error/" rel="alternate" type="text/html" title="Troubleshooting EKS Managed Node Group PodEvictionFailure Error" /><published>2023-06-03T00:00:00+00:00</published><updated>2023-06-03T00:00:00+00:00</updated><id>https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error</id><content type="html" xml:base="https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error/"><![CDATA[<p>As mentioned in the previous article, in 2019 EKS released a new API that supports Managed Node Groups <sup id="fnref:eks-managed-nodegroup" role="doc-noteref"><a href="#fn:eks-managed-nodegroup" class="footnote" rel="footnote">1</a></sup> and introduced the error <code>Ec2SubnetInvalidConfiguration</code>. This article will further explore the <code>PodEvictionFailure</code> error encountered during the Managed Node Group upgrade process.</p>
+
+<p>The <code>PodEvictionFailure</code> error is a common error encountered during node group upgrades in EKS, typically when using the AWS Console, the <code>aws eks update-nodegroup-version</code> command or the <code>UpdateNodegroupVersion</code> API call. This article will further analyze the reasons, common scenarios, and solutions to this error.</p>
+
+<h2 id="how-to-identify-the-issue">How to Identify the Issue</h2>
+
+<p>To check if there are any <code>PodEvictionFailure</code> errors in the EKS Managed Node Groups, you can use the EKS Console or AWS CLI command to check for any issues. For example, by clicking the <code>Compute</code> tab under Cluster, then clicking on <code>Node groups</code>, you can check if there are any error messages related to the upgrade events in the <code>Update history</code> tab:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png" alt="Nodegroup update history" /></p>
+
+<p>By clicking on an individual upgrade event, you can see more detailed information about the error:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-detail.png" alt="Nodegroup update details" /></p>
+
+<p>According to the EKS Managed Node Group upgrade process <sup id="fnref:eks-managed-nodegroup-update-behavior" role="doc-noteref"><a href="#fn:eks-managed-nodegroup-update-behavior" class="footnote" rel="footnote">2</a></sup>, if the upgrade or creation of a node takes more than 15-20 minutes, it is likely that there are problems with the working nodes. After a period of time, it is usually possible to further investigate the possible causes using this information. Here’s an example of using an AWS CLI command:</p>
+
+<pre><code>$ aws eks list-updates --name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt;
+{
+    "updateIds": [
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE"
+    ]
+}
+
+$ aws eks describe-update --name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt; --update-id AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE
+{
+    "update": {
+        "id": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE",
+        "status": "Failed",
+        "type": "VersionUpdate",
+        "params": [
+            {
+                "type": "Version",
+                "value": "1.26"
+            },
+            {
+                "type": "ReleaseVersion",
+                "value": "1.26.4-20230526"
+            }
+        ],
+        "createdAt": "2023-06-03T17:19:38.068000+00:00",
+        "errors": [
+            {
+                "errorCode": "PodEvictionFailure",
+                "errorMessage": "Reached max retries while trying to evict pods from nodes in node group &lt;NODE_GROUP_NAME&gt;",
+                "resourceIds": [
+                    "ip-192-168-2-44.eu-west-1.compute.internal"
+                ]
+            }
+        ]
+    }
+}
+
+</code></pre>
+
+<p>In the example above, the upgrade failed due to exceeding the maximum number of retries when trying to stop Pods during the upgrade, and the upgrade status is <code>Failed</code>.</p>
+
+<h2 id="common-scenarios-and-causes">Common Scenarios and Causes</h2>
+
+<h3 id="pod-disruption-budget-pdb">Pod Disruption Budget (PDB)</h3>
+
+<p>Pod Disruption Budget (PDB) <sup id="fnref:pdb" role="doc-noteref"><a href="#fn:pdb" class="footnote" rel="footnote">3</a></sup> is a Kubernetes resource object used to ensure that the availability of a particular deployment is not disrupted during maintenance, upgrades, rollbacks, etc. PDB is typically used to set the minimum number of Pods running. When performing maintenance operations, Kubernetes ensures that the number of Pods running in the current cluster is not less than this number. This ensures that the availability of the service is not affected or interrupted during maintenance.</p>
+
+<p>Here’s an example of a PDB:</p>
+
+<pre><code>apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: my-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: my-app
+
+</code></pre>
+
+<p>In this example, we set a PDB with a minimum availability of 2, and the selector is <code>app=my-app</code>. This means that when performing maintenance operations, Kubernetes ensures that at least 2 Pods that match the selector are available.</p>
+
+<p>PDB configuration can help ensure the availability of Pods during maintenance operations and can reduce the likelihood of <code>PodEvictionFailure</code> errors. When designing applications, it is recommended that PDB be used to ensure the availability of the application.</p>
+
+<h3 id="relationship-between-podevictionfailure-and-pdb">Relationship between PodEvictionFailure and PDB</h3>
+
+<p>The <code>PodEvictionFailure</code> error is usually caused by EKS being unable to stop Pods on the nodes to be updated. When performing Managed Node Group upgrade and replacement operations, if the number of target Pods running on the nodes to be updated is less than the minimum value set in PDB, Kubernetes will refuse to delete Pods. In this case, the <code>PodEvictionFailure</code> error may occur during the upgrade process. For example, the following environment deploys a Kubernetes Deployment (<code>nginx-deploymnet</code>) and runs it on the only node <code>ip-192-168-2-44.eu-west-1.compute.internal</code> in the current environment:</p>
+
+<pre><code>NAMESPACE     NAME                                   READY   STATUS    RESTARTS      AGE   IP               NODE                                           NOMINATED NODE   READINESS GATES
+default       pod/nginx-deployment-ff6774dc6-dntfm   1/1     Running   0             45m   192.168.7.16     ip-192-168-2-44.eu-west-1.compute.internal
+
+NAMESPACE     NAME                               READY   UP-TO-DATE   AVAILABLE   AGE   CONTAINERS
+default       deployment.apps/nginx-deployment   1/1     1            1           49m   nginx
+
+</code></pre>
+
+<p>At the same time, the following <code>PodDisruptionBudget</code> resource is set in the environment (all Pods of this <code>nginx-deployment</code> have the <code>app=nginx</code> label):</p>
+
+<pre><code>apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nginx-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: nginx
+
+</code></pre>
+
+<p>When performing update or replacement node processes, we usually need to mark the nodes as unscheduled and stop the applications running on them. Kubernetes provides methods like <code>kubectl drain</code> to support this operation <sup id="fnref:kubectl-drain" role="doc-noteref"><a href="#fn:kubectl-drain" class="footnote" rel="footnote">4</a></sup>. Once <code>kubectl drain</code> marks the node as being in maintenance mode, it triggers Kubernetes Scheduler to reschedule the Pods on the node.</p>
+
+<p>In addition, before rescheduling, the <code>kubectl drain</code> command marks the node as unscheduled so that new Pods are not scheduled on the node. At the same time, the Pods that are already running on the node will be stopped one by one. However, in the case of violating the <code>PodDisruptionBudget</code>, such an operation is likely to fail. For example, the following is an example that cannot be stopped correctly in the presence of PDB:</p>
+
+<pre><code>$ kubectl drain ip-192-168-2-44.eu-west-1.compute.internal --ignore-daemonsets --delete-emptydir-data
+node/ip-192-168-2-44.eu-west-1.compute.internal already cordoned
+WARNING: ignoring DaemonSet-managed Pods: kube-system/aws-node-n9lc5, kube-system/kube-proxy-lwxcb
+evicting pod kube-system/coredns-6866f5c8b4-r96z8
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+evicting pod kube-system/coredns-6866f5c8b4-h296r
+
+pod/coredns-6866f5c8b4-r96z8 evicted
+pod/coredns-6866f5c8b4-h296r evicted
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+...
+
+</code></pre>
+
+<h3 id="deployment-allows-deployment-on-nodes-with-taints">Deployment allows deployment on nodes with taints</h3>
+
+<p>In Kubernetes, Taints and Tolerations are mechanisms used to control whether Pods can be scheduled on specific nodes. Taints are labels applied to nodes that indicate specific restrictions or requirements for the node. Tolerations, defined by the Pod, tell Kubernetes which taints the Pod can tolerate, allowing or preventing the Pod from being scheduled on nodes that meet certain conditions. <sup id="fnref:k8s-taints-tolerations" role="doc-noteref"><a href="#fn:k8s-taints-tolerations" class="footnote" rel="footnote">5</a></sup></p>
+
+<p>However, incorrect tolerations settings can result in applications being continuously scheduled to nodes where they are expected to be replaced. For example, the following example ignores the Taint settings associated with the Node:</p>
+
+<pre><code>apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  ...
+  template:
+    ...
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+      tolerations:
+        - operator: "Exists"
+    ...
+
+</code></pre>
+
+<p>As mentioned earlier, the <code>kubectl drain</code> command marks the node as unschedulable before rescheduling, so new Pods are not scheduled to that node. During this operation, Kubernetes also sets a Taint on the node: <code>node.kubernetes.io/unschedulable:NoSchedule</code>.</p>
+
+<pre><code>$ kubectl get nodes
+NAME                                         STATUS                     ROLES    AGE    VERSION
+ip-192-168-2-44.eu-west-1.compute.internal   Ready,SchedulingDisabled   &lt;none&gt;   126m   v1.25.9-eks-0a21954
+
+$ kubectl describe node
+Name:               ip-192-168-2-44.eu-west-1.compute.internal
+...
+Taints:             node.kubernetes.io/unschedulable:NoSchedule
+
+</code></pre>
+
+<p>However, when using the above tolerations settings, the corresponding scheduling behavior for the application is ignored. For example, the following is the process of continuously scheduling Pods even after running <code>kubectl drain</code> on the Node:</p>
+
+<pre><code>NAME                                READY   STATUS    RESTARTS   AGE   IP              NODE
+nginx-deployment-6876484bcc-h28sn   1/1     Running   0          25s   192.168.9.175   ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-h28sn   1/1     Terminating   0          38s   192.168.9.175   ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   0/1     Pending       0          0s    &lt;none&gt;          ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   0/1     ContainerCreating   0          0s    &lt;none&gt;          ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   1/1     Running             0          2s    192.168.18.140   ip-192-168-2-44.eu-west-1.compute.internal
+
+</code></pre>
+
+<p>For EKS Managed Node Group upgrade operations, the node is not completely disabled for Pods and remains in an uncleared state, causing a <code>PodEvictionFailure</code> error during the update process.</p>
+
+<h3 id="pod-has-an-error">Pod has an error</h3>
+
+<p>If the problem is not caused by the above, it may indicate that the Pod cannot be shut down for some reason, such as the application interacting with NFS but the operation is stuck in I/O behavior, network problems, or resource constraints (such as high CPU load causing the system to be unresponsive).</p>
+
+<p>To determine the status and cause of the error Pod, you can use the following commands to view detailed Pod status or related log records to determine the cause of the problem:</p>
+
+<pre><code>$ kubectl describe pod
+$ kubectl logs &lt;POD_NAME&gt;
+
+</code></pre>
+
+<h2 id="solution-and-steps">Solution and Steps</h2>
+
+<h3 id="pod-disruption-budget-pdb-1">Pod Disruption Budget (PDB)</h3>
+
+<p>To check if the upgrade was affected by Pod Disruption Budget (PDB), you can use the following command to confirm the current PDB settings:</p>
+
+<pre><code>kubectl get pdb --all-namespaces
+
+</code></pre>
+
+<p>If EKS Control Plane Logging is enabled, you can also use CloudWatch Log Insights to filter and check for any related failure events.</p>
+
+<ol>
+  <li>Under <code>Cluster</code> &gt; <code>Logging</code>, select <code>Audit</code> to open the Amazon CloudWatch Console.</li>
+  <li>In the Amazon CloudWatch console, select <code>Logs</code> and then select <code>Log Insights</code> to filter the audit logs generated by EKS.</li>
+</ol>
+
+<p>The following are examples of query sentence:</p>
+
+<pre><code>fields @timestamp, @message
+| filter @logStream like "kube-apiserver-audit"
+| filter ispresent(requestURI)
+| filter objectRef.subresource = "eviction"
+| display @logStream, requestURI, responseObject.message
+| stats count(*) as retry by requestURI, responseObject.message
+
+</code></pre>
+
+<p>By viewing the audit logs, you can further confirm whether there is any specific information related to Pod Disruption Budget in the events of disabling the Pod:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png" alt="Nodegroup update history" /></p>
+
+<p>If the upgrade fails due to PDB, you can modify or remove the PDB and try to upgrade again:</p>
+
+<pre><code># Edit
+$ kubectl edit pdb &lt;PDB_NAME&gt;
+
+# Delete
+$ kubectl delete pdb &lt;PDB_NAME&gt;
+
+</code></pre>
+
+<h3 id="incorrect-tolerations-configuration">Incorrect Tolerations Configuration</h3>
+
+<p>As mentioned earlier, incorrect <code>tolerations</code> settings may cause the application to continue to be scheduled on nodes that are expected to be replaced. You can solve this problem by correcting the corresponding deployment settings:</p>
+
+<pre><code>apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  ...
+  template:
+    ...
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+      tolerations: &lt;---- Corrected settings
+        - operator: "Exists"
+    ...
+
+</code></pre>
+
+<h3 id="force-update">Force Update</h3>
+
+<p>By default, EKS Managed Node Group upgrades use the Rolling update method, which will comply with the Pod Disruption Budget (PDB) settings during the upgrade process. If the upgrade process fails due to PDB, the upgrade process will fail.</p>
+
+<p>If the upgrade cannot be completed correctly due to PDB or other reasons, you can also choose Force update during the upgrade process to upgrade. This option will ignore the PDB settings during the upgrade process. Regardless of whether PDB issues occur, the nodes will be forcibly restarted for the update.</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-force-update-option.png" alt="" /></p>
+
+<p>The following are examples of using AWS CLI:</p>
+
+<pre><code>$ aws eks update-nodegroup-version --cluster-name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt; --force
+
+</code></pre>
+
+<p>The following are examples of using eksctl:</p>
+
+<pre><code>$ eksctl upgrade nodegroup --cluster &lt;CLUSTER_NAME&gt; --name &lt;NODE_GROUP_NAME&gt; --force-upgrade
+
+</code></pre>
+
+<h2 id="summary">Summary</h2>
+
+<p>In this article, we mentioned the common scenarios and causes of the <code>PodEvictionFailure</code> error encountered during the Managed Node Group upgrade process in EKS, and put forward relevant solutions, such as:</p>
+
+<ul>
+  <li>Check whether the PodDisruptionBudget (PDB) settings are incorrect. If the upgrade fails due to PDB, you can modify or remove the PDB and try to upgrade again.</li>
+  <li>Check whether the Tolerations settings are incorrect. Incorrect Tolerations settings may cause the application to continue to be scheduled on nodes that are expected to be replaced, and the corresponding deployment settings need to be corrected.</li>
+</ul>
+
+<p>Finally, if the above methods still cannot solve the problem, you can choose Force update to upgrade. This option will ignore the PDB settings during the upgrade process and forcibly restart the nodes for the update<sup id="fnref:troubleshoot-nodegroup-update-failures" role="doc-noteref"><a href="#fn:troubleshoot-nodegroup-update-failures" class="footnote" rel="footnote">6</a></sup> <sup id="fnref:eks-managed-node-group-update-issue" role="doc-noteref"><a href="#fn:eks-managed-node-group-update-issue" class="footnote" rel="footnote">7</a></sup>.</p>
+
+<p>By following the above solutions and related steps, I hope to help you read this article more directionally to troubleshoot and solve this error.</p>
+
+<h2 id="references">References</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:eks-managed-nodegroup" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/blogs/containers/eks-managed-node-groups/">Extending the EKS API: Managed Node Groups</a> <a href="#fnref:eks-managed-nodegroup" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-nodegroup-update-behavior" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/managed-node-update-behavior.html#managed-node-update-scale-up">Managed node update behavior - Scale up phase</a> <a href="#fnref:eks-managed-nodegroup-update-behavior" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:pdb" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/workloads/pods/disruptions/#pod-disruption-budgets">Kubernetes Documentation - Pod disruption budgets</a> <a href="#fnref:pdb" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubectl-drain" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/">Kubernetes Documentation - Safely Drain a Node</a> <a href="#fnref:kubectl-drain" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-taints-tolerations" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/">Kubernetes Documentation - Taints and Tolerations</a> <a href="#fnref:k8s-taints-tolerations" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:troubleshoot-nodegroup-update-failures" role="doc-endnote">
+      <p><a href="https://repost.aws/knowledge-center/eks-node-group-update-failures">How do I troubleshoot common issues with Amazon EKS node group update failures?</a> <a href="#fnref:troubleshoot-nodegroup-update-failures" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-node-group-update-issue" role="doc-endnote">
+      <p><a href="https://repost.aws/knowledge-center/eks-managed-node-group-update">How can I troubleshoot managed node group update issues for Amazon EKS?</a> <a href="#fnref:eks-managed-node-group-update-issue" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Kubernetes Service (EKS)" /><category term="Kubernetes" /><summary type="html"><![CDATA[As mentioned in the previous article, in 2019 EKS released a new API that supports Managed Node Groups 1 and introduced the error Ec2SubnetInvalidConfiguration. This article will further explore the PodEvictionFailure error encountered during the Managed Node Group upgrade process. Extending the EKS API: Managed Node Groups &#8617;]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry><title type="html">Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA</title><link href="https://easontechtalk.com/nsa-kubernetes-hardening-guide/" rel="alternate" type="text/html" title="Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA" /><published>2023-06-01T00:00:00+00:00</published><updated>2023-06-01T00:00:00+00:00</updated><id>https://easontechtalk.com/nsa-kubernetes-hardening-guide</id><content type="html" xml:base="https://easontechtalk.com/nsa-kubernetes-hardening-guide/"><![CDATA[<p>As a containerized scheduling platform, Kubernetes has become an essential part of the infrastructure in many enterprises and production environments. However, due to its complexity, Kubernetes’ execution environment also faces many security challenges and potential issues. The United States National Security Agency (NSA) and Cybersecurity and Infrastructure Security Agency (CISA) released a network security report called Kubernetes Hardening Guidance in 2022 <sup id="fnref:nsa-cisa-press" role="doc-noteref"><a href="#fn:nsa-cisa-press" class="footnote" rel="footnote">1</a></sup> (full document <sup id="fnref:k8s-hardening-guide" role="doc-noteref"><a href="#fn:k8s-hardening-guide" class="footnote" rel="footnote">2</a></sup>). As a guide to strengthen Kubernetes, the guide not only aims to provide relevant strengthening policies for the NSA, CISA, and key infrastructure for running Kubernetes clusters for federal and public agencies in the United States, but also details the security threats hidden in the Kubernetes environment and provides relevant configuration guidelines to minimize its security risks. For Kubernetes administrators, this guide is a very useful reference resource.</p>
+
+<h2 id="purpose-of-providing-kubernetes-hardening-guidance">Purpose of Providing Kubernetes Hardening Guidance</h2>
+
+<p>The purpose of this guide is to provide the best security practices when using Kubernetes to reduce its risks. In this document, various topics are mentioned, from authentication, authorization, network security, to monitoring policies, and useful tools and techniques are provided to strengthen the security measures of Kubernetes clusters.</p>
+
+<h2 id="what-does-this-guide-say">What does this guide say?</h2>
+
+<p>After reading this document, it can be noticed that the overview section of the document directly mentions the core security issues around which the entire document revolves. The following dozens of pages describe in detail how to set up and protect the Kubernetes environment and related security issues. In this content, not only from the perspective of the cluster system administrator, but also from the perspective of the system developer, relevant configuration recommendations are proposed to avoid common configuration errors, and relevant practices, mitigation, and strengthening measures are covered, mainly including:</p>
+
+<ul>
+  <li>Scan containers and pods to find vulnerabilities or configuration errors</li>
+  <li>Run containers and pods with minimum permissions</li>
+  <li>Use network isolation policies (Network Policy) to control the scope of threats</li>
+  <li>Use firewalls to restrict unnecessary network connections and use encryption to protect confidentiality</li>
+  <li>Use sound authentication and authorization mechanisms to limit user and administrator access and limit the scope of possible attacks</li>
+  <li>Log and review activity logs (Audit Log) to detect potential malicious activity in a timely manner</li>
+  <li>Regularly review all Kubernetes configurations, use vulnerability scanning tools to ensure that risks are properly handled, and plan upgrades regularly</li>
+</ul>
+
+<h2 id="main-content-of-kubernetes-hardening-guidance">Main Content of Kubernetes Hardening Guidance</h2>
+
+<p>This guide is mainly divided into three parts: authorization and authentication, network security, and monitoring</p>
+
+<h3 id="authorization-and-authentication">Authorization and Authentication</h3>
+
+<p>Authorization and authentication are the first step in protecting the Kubernetes environment. In this section, the guide introduces some best practices, including using appropriate authentication methods, restricting access to the Kubernetes API, and using appropriate roles and permissions. The common configuration policy is Kubernetes’ own Role-Based Access Control (RBAC).</p>
+
+<p>Access to the Kubernetes environment should be protected through multi-factor authentication (MFA). In addition, the configuration of permissions should follow the principle of least privilege to minimize the attack surface. At the same time, the importance of using appropriate roles and permissions (Role-Based Access Control) to limit access to the Kubernetes API is emphasized.</p>
+
+<h3 id="network-security">Network Security</h3>
+
+<p>In this section, the guide introduces some best practices, including using network isolation, restricting access to the Kubernetes network, and using encrypted communication.</p>
+
+<p>In this document, several recommendations are mentioned to use appropriate network policies and restrict communication between pods. The document also covers relevant recommendations for using encrypted communication to protect sensitive data.</p>
+
+<h3 id="monitoring-and-threat-detection">Monitoring and Threat Detection</h3>
+
+<p>Monitoring is critical to protecting the Kubernetes environment. In this section, the guide introduces some best practices, including using appropriate monitoring tools, paying attention to important events and alerts, and establishing response plans.</p>
+
+<p>The guide recommends using appropriate monitoring tools to monitor the status and behavior of the Kubernetes environment. At the same time, the necessity of establishing response plans to respond to security incidents in the environment is emphasized. The guide provides some example events to help enterprises better understand which events may pose risks to their environment.</p>
+
+<h2 id="threat-model-of-kubernetes-clusters">Threat Model of Kubernetes Clusters</h2>
+
+<p>As the business and computing load that Kubernetes can carry increase, more and more applications and network services are running on Kubernetes as a containerized scheduling foundation platform. In this case, this also means that the content running in the Kubernetes cluster may contain many critical information of enterprises and organizations, making Kubernetes a high-value target for attackers to steal data or computing power. For example: In addition to being a possible target for DDoS attacks, a common attack method is to deploy malware for bitcoin or cryptocurrency mining. CrowdStrike also released a common attack method this year, pointing out that mining attackers disguise mining programs as Pause Containers to make it difficult for administrators to detect <sup id="fnref:crowdstrike-cryptojacking-k8s-campaign" role="doc-noteref"><a href="#fn:crowdstrike-cryptojacking-k8s-campaign" class="footnote" rel="footnote">3</a></sup>.</p>
+
+<p>In this document, a threat modeling is specifically listed for existing Kubernetes clusters, and some of the most likely threats that may be encountered are:</p>
+
+<ul>
+  <li>Supply Chain: Upstream and third-party software supply chain attack vectors are diverse and difficult to mitigate. This includes product components, services, personnel, and even risks that may include third-party software and suppliers used to build and manage Kubernetes clusters, affecting multiple levels:
+    <ul>
+      <li>Container/application level: Because any application and container can be run and scheduled in Kubernetes, a part of security threats depend heavily on third-party security, developer trustworthiness, and software defenses. A malicious container or application deployed in Kubernetes can pose a security threat.</li>
+      <li>Container runtime: In order to run containers, the container runtime required by the container must be present on each worker node, and downloaded from the storage location of the image. The container runtime plays a critical role in the life cycle of containers, including monitoring system resources and isolating system resources available to containers. Vulnerabilities in the container runtime and related virtualization technologies may cause this isolation to fail and even allow attackers to obtain higher privileges on the system.</li>
+      <li>Infrastructure: The underlying hardware and firmware on which Kubernetes runs are still dependent on the basic system. Any vulnerabilities in the system layer or Kubernetes master node may provide a foothold for malicious attacks.</li>
+    </ul>
+  </li>
+  <li>Malicious attackers: Malicious attackers often exploit vulnerabilities or steal credentials from social engineering. Kubernetes exposes several APIs in its architecture, which allows attackers to further exploit these APIs for malicious operations, including:
+    <ul>
+      <li>Control Plane: Kubernetes master node has many components, and if the API Server is not properly configured for permission management, attackers may access the Kubernetes cluster arbitrarily for related malicious operations.</li>
+      <li>Worker Node: In addition to running the container engine, the worker node typically also runs important services such as kubelet and kube-proxy. If these services themselves have vulnerabilities, they may be exploited by hackers.</li>
+      <li>Containerized applications: Applications running in the cluster are a common target for attacks.</li>
+    </ul>
+  </li>
+  <li>Internal threats: One possible threat also includes threats from internal personnel. Internal attackers can use vulnerabilities or privileges given when working in the organization for nefarious purposes.
+    <ul>
+      <li>Cluster Administrator: Kubernetes cluster administrators can control running containers, pods, and even execute arbitrary commands in a containerized environment. This can be mitigated by limiting access to sensitive functionalities through Kubernetes’ built-in RBAC mechanism. However, Kubernetes lacks dual integrity controls (i.e., two different keys required to open a door, with each key held by different people). Additionally, administrators can physically access the system or virtualization management programs (hypervisor), which can compromise the Kubernetes runtime environment.</li>
+      <li>User: Access users in containerized applications may know and possess credentials to access containerized services in the Kubernetes cluster. Once obtained, these credentials can be used for advanced attacks based on vulnerabilities in the software itself.</li>
+      <li>Cloud Service Provider (CSP): Since Kubernetes clusters may run on other service providers, CSPs often need to have multi-layered technical and management controls to protect the system from potential threats and attacks.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="enhancement-for-each-dimensions">Enhancement for Each Dimensions</h2>
+
+<h3 id="kubernetes-pod-security">Kubernetes Pod Security</h3>
+
+<h4 id="running-non-root-containers">Running “Non-root” Containers</h4>
+
+<p>By default, applications running in containers use the root user identity. However, it is possible to deploy and run Pods as non-root users. In the Pod Security section, an example Dockerfile is provided that demonstrates how to use Linux groups and user identities to run the process as a non-root user.</p>
+
+<pre><code>FROM ubuntu:latest
+
+# Update and install the make utility
+RUN apt update &amp;&amp; apt install -y make
+
+# Copy the source from a folder called “code” and build the application with the make utility
+COPY . /code
+RUN make /code
+
+# Create a new user (user1) and new group (group1); then switch into that user’s context
+RUN useradd user1 &amp;&amp; groupadd group1
+USER user1:group1
+
+# Set the default entrypoint for the container
+CMD /code/app
+
+</code></pre>
+
+<p>In addition, Kubernetes provides the <code>securityContext</code> attribute for setting non-root user identities during Pod deployment:</p>
+
+<pre><code>spec:
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+
+</code></pre>
+
+<h4 id="immutable-container-file-systems">Immutable Container File Systems</h4>
+
+<p>By default, applications running inside Pods have permission to write to the container file system. This permission can be exploited by attackers to create files, download malicious code, or modify application code. To enhance security, Kubernetes administrators can set the container file system as read-only and use a Volume (emptyDir<sup id="fnref:emptyDir" role="doc-noteref"><a href="#fn:emptyDir" class="footnote" rel="footnote">4</a></sup>) for write operations for temporary storage (either a file system or tmpfs memory) that is automatically cleared after the container terminates.</p>
+
+<pre><code>spec:
+  containers:
+  - command: ["sleep"]
+    args: ["999"]
+    image: ubuntu:latest
+    name: web
+    securityContext:
+        readOnlyRootFilesystem: true
+    volumeMounts:
+        - mountPath: /writeable/location/here
+          name: volName
+    volumes:
+        - emptyDir: {}
+          name: volName
+
+</code></pre>
+
+<h4 id="building-secure-container-images">Building Secure Container Images</h4>
+
+<p>One common practice for building secure container images is to include image scanning and vulnerability scanning during the CI/CD build and push process. This includes checking for outdated libraries, dependencies, configuration issues, improper permissions, open ports, potential vulnerabilities, and CVEs. Additionally, Kubernetes provides native features and Admission Webhook mechanisms for triggering scans during container deployment. This provides a more comprehensive and flexible security detection mechanism that actively blocks any illegal image deployment and prevents non-compliant Pod deployment settings (such as deploying Privilege Containers) in the Webhook configuration.</p>
+
+<p><img src="/assets/images/2023/nsa-kubernetes-hardening-guide/secure-container-image-build-workflow.png" alt="" />
+(Image source: Kubernetes Hardening Guidance)</p>
+
+<h4 id="other">Other</h4>
+
+<p>The following are other suggestions related to Pod security in this chapter:</p>
+
+<ul>
+  <li>Enhancing Pod Security: Common strategies include applying Pod Security Policies (PSPs - deprecated in later Kubernetes versions) and using Pod Security Admission, which is enabled by default in Kubernetes 1.23.</li>
+  <li>Protecting Pod Service Account Tokens: For execution environments that do not require access to Pod Service Account Tokens, disable the automounting of Service Account Tokens (automountServiceAccountToken: false).</li>
+  <li>Enhancing Container Execution and Virtualization Security at the System Level: For example, enabling seccomp, which is supported by the Kernel, and running container execution environments with hypervisor-supported security virtualization technologies.</li>
+</ul>
+
+<h3 id="network-separation-isolation-and-hardening">Network Separation (Isolation) and Hardening</h3>
+
+<p>Network security is an important part of Kubernetes security. By isolating and hardening various network components in Kubernetes, the risk of network attacks can be significantly reduced. The following measures can be taken:</p>
+
+<h4 id="network-isolation">Network Isolation</h4>
+
+<p>Kubernetes supports <code>NetworkPolicy</code> to set network access rules between Pods and restrict network access sources and destinations to reduce attack risks. Before setting up Network Policy, it is usually necessary to isolate applications in different Kubernetes <code>Namespaces</code> and ensure that the CNI (Container Network Interface) Plugin used supports <code>NetworkPolicy</code><sup id="fnref:network-policies" role="doc-noteref"><a href="#fn:network-policies" class="footnote" rel="footnote">5</a></sup>.</p>
+
+<pre><code>apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: example-access-nginx
+  namespace: &lt;NAMESPACE_NAME&gt;
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx
+  ingress:
+  - from:
+    - podSelector:
+      matchLabels:
+        access: "true"
+
+</code></pre>
+
+<h4 id="resource-usage-policy-settings">Resource Usage Policy Settings</h4>
+
+<p>Kubernetes supports the use of <code>LimitRanges</code><sup id="fnref:limit-ranges" role="doc-noteref"><a href="#fn:limit-ranges" class="footnote" rel="footnote">6</a></sup> (to limit the number of resources that individual Pods or Containers can use in a single Namespace), <code>ResourceQuotas</code><sup id="fnref:resource-quotas" role="doc-noteref"><a href="#fn:resource-quotas" class="footnote" rel="footnote">7</a></sup> (to limit the amount of CPU, memory, and storage resources that can be used in a Namespace), and <code>Process ID (PID)</code> <sup id="fnref:pid-limit" role="doc-noteref"><a href="#fn:pid-limit" class="footnote" rel="footnote">8</a></sup> limits to control available resources for specific Kubernetes Namespaces, Nodes, or Pods.</p>
+
+<pre><code>apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cpu-min-max-demo-lr
+spec:
+  limits
+  - default:
+      cpu: 1
+    defaultRequest:
+      cpu: 0.5
+    max:
+      cpu: 2
+    min:
+      cpu 0.5
+    type: Container
+
+</code></pre>
+
+<p>Resource limit settings can also be applied to the Kubernetes Pod deployment itself:</p>
+
+<pre><code>apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend
+spec:
+  containers:
+  - name: app
+    image: images.my-company.example/app:v4
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "250m"
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+
+</code></pre>
+
+<h4 id="control-plane-hardening">Control Plane Hardening</h4>
+
+<p>This section discusses several enhancements for Kubernetes Master Node security, including:</p>
+
+<ul>
+  <li>Enabling API Server Access Control: Role-Based Access Control (RBAC) can be used to set which users or groups can access the API Server and limit access.</li>
+  <li>Network Encryption: Encryption can be enabled using HTTPS/TLS or other network encryption mechanisms. Since etcd is the most critical component of the entire Kubernetes Cluster, encryption can also be used for communication between etcd and the API Server. This not only increases network transmission security but also reduces the risk of eavesdropping or attack.</li>
+  <li>
+    <p>Avoid exposing the Kubernetes API Server to the network: API Server uses 6443 (or sometimes 443) by default, and these ports should be strengthened and associated with security group rules, including:</p>
+
+    <ul>
+      <li><code>2379-2380</code>: etcd server client API</li>
+      <li><code>10250</code>: kubelet API</li>
+      <li><code>10259</code>: kube-scheduler</li>
+      <li><code>10257</code>: kube-controller-manager</li>
+      <li><code>30000-32767</code>: Ports that may be opened on a Worker Node when using NodePort</li>
+    </ul>
+  </li>
+  <li>Encrypting Secret Objects: By default, Kubernetes Secrets are unencrypted base64-encoded strings, and anyone with Kubernetes API access can obtain sensitive information. Therefore, encryption can be used to encrypt Secrets when writing to etcd using third-party encryption services (such as AWS Key Management Service, KMS) or by adding the <code>--encryption-provider-config</code> parameter to the API Server startup to configure encryption providers <sup id="fnref:kms-encryption" role="doc-noteref"><a href="#fn:kms-encryption" class="footnote" rel="footnote">9</a></sup>.</li>
+</ul>
+
+<h4 id="protecting-sensitive-cloud-infrastructure">Protecting Sensitive Cloud Infrastructure</h4>
+
+<p>Many organizations choose to run Kubernetes in cloud service provider environments. For example, in AWS, administrators can block EC2 Metadata Service (IMDS) access and prevent access to possible credentials (EC2 Instance IAM Role) by setting EC2 properties. The following example shows how to use EC2’s built-in settings or <code>NetworkPolicy</code> to achieve this.</p>
+
+<p>(AWS CLI)</p>
+
+<pre><code>aws ec2 modify-instance-metadata-options --instance-id &lt;value&gt; --http-tokens required --http-put-response-hop-limit 1
+</code></pre>
+
+<p>(NetworkPolicy)</p>
+
+<pre><code>apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-metadata-access
+  namespace: example
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 169.254.169.254/32
+
+</code></pre>
+
+<h3 id="authentication-and-authorization">Authentication and Authorization</h3>
+
+<p>Authentication and authorization are important aspects of Kubernetes security. This chapter provides some best practices, including using appropriate authentication methods, restricting access to the Kubernetes API, and using appropriate roles and permissions. These practices are centered around setting up Role-Based Access Control (RBAC) to protect the Kubernetes environment. Setting up RBAC rules may include:</p>
+
+<ul>
+  <li>Defining roles and permissions for Kubernetes users, groups, and service accounts</li>
+  <li>Binding roles to users, groups, and service accounts</li>
+  <li>Creating custom roles with specific permissions and constraints</li>
+  <li>Limiting namespace access to specific users or groups</li>
+</ul>
+
+<p>However, the focus is mainly on setting up Role-Based Access Control (RBAC) for Kubernetes itself to protect the Kubernetes execution environment. For example, setting up a Role identity that only has read access to Pods:</p>
+
+<pre><code>apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: your-namespace-name
+  name: pod-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "list"]
+
+</code></pre>
+
+<p>To enable this setting, the kube-apiserver must use the necessary parameter (<code>--authorization-mode=RBAC</code>) to support this method.</p>
+
+<h2 id="summary">Summary</h2>
+
+<p>In summary, the Kubernetes Hardening Guidance released by the NSA and CISA provides a comprehensive guide for Kubernetes administrators to minimize the security risks of the Kubernetes environment. The guide covers various aspects of Kubernetes security, including authentication and authorization, network security, and monitoring. By following the best practices and recommendations in this guide, Kubernetes administrators can strengthen the security measures of their Kubernetes clusters and better protect against potential security threats.</p>
+
+<p>As a summary of the content, the following are the key recommendations for each section in this document:</p>
+
+<p><strong>Kubernetes Pod Security</strong></p>
+
+<ul>
+  <li>Run containers with non-root privilege</li>
+  <li>Configure immutable container file systems</li>
+  <li>Create and scan container images for potential vulnerabilities or misconfigurations</li>
+  <li>Use relevant technologies and features to control potential security threats, including:
+    <ul>
+      <li>Prevent running privileged container containers</li>
+      <li>Avoid using less secure features and options such as hostPID, hostIPC, hostNetwork, allowedHostPath</li>
+      <li>Avoid running applications as root user by using RunAsUser attribute</li>
+      <li>Consider enabling security features at the system level (e.g. SELinux, AppArmor, and seccomp)</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>Network Isolation and Hardening</strong></p>
+
+<ul>
+  <li>Use firewalls and role-based access control (RBAC) to restrict access to control plane nodes and consider using separate network between control plane components and nodes</li>
+  <li>Limit access to etcd</li>
+  <li>Configure control plane components to use transport layer security (TLS) certificates for authentication and encrypted communication, including encrypting etcd and using TLS protocol for communication</li>
+  <li>Consider configuring NetworkPolicy to isolate resources and set explicit network security policies (NetworkPolicy)</li>
+  <li>Store all certificates and sensitive information encrypted in Kubernetes Secrets rather than in configuration files. Consider enabling services such as KMS to encrypt Kubernetes Secrets resources.</li>
+</ul>
+
+<p><strong>Authentication and Authorization</strong></p>
+
+<ul>
+  <li>Disable anonymous user access to and operation on Kubernetes API Server (enabled by default)</li>
+  <li>Enable RBAC and create individual RBAC policies for users, administrators, developers, and Service Accounts.</li>
+</ul>
+
+<p><strong>Logging and Threat Detection</strong></p>
+
+<ul>
+  <li>Enable audit log operation record for API Server (turned off by default) and Kubernetes event logs for lookup and tracking</li>
+  <li>Configure consistent log collection, monitoring, and alerting systems for applications and containers</li>
+</ul>
+
+<p><strong>Upgrade and Application Security Best Practices</strong></p>
+
+<ul>
+  <li>Update Kubernetes version and security vulnerabilities in real time</li>
+  <li>Conduct vulnerability scans and penetration tests regularly</li>
+  <li>Remove and delete unused components and deployments from the environment</li>
+</ul>
+
+<h2 id="conclusion">Conclusion</h2>
+
+<p>Overall, after reading this Kubernetes Hardening Guide released by NSA and CISA, I feel like I am reviewing the support of Kubernetes itself for security features. I think as a checklist, it is definitely a very useful reference document.</p>
+
+<p>Of course, in many practical applications, Kubernetes deployment and security may be based on organizational culture or even any uncontrollable factors, making it impossible to strengthen all threats one by one. However, as a Kubernetes administrator, by learning and gradually implementing these best practices, you can better protect the Kubernetes runtime environment, reduce potential security risks, and establish a continuous improvement security plan and guide organizational culture enhancement to deal with constantly changing security threats.</p>
+
+<h2 id="references">References</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:nsa-cisa-press" role="doc-endnote">
+      <p><a href="https://www.nsa.gov/Press-Room/News-Highlights/Article/Article/2716980/nsa-cisa-release-kubernetes-hardening-guidance/">NSA, CISA release Kubernetes Hardening Guidance release Kubernetes Hardening Guidance</a> <a href="#fnref:nsa-cisa-press" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-hardening-guide" role="doc-endnote">
+      <p><a href="https://media.defense.gov/2022/Aug/29/2003066362/-1/-1/0/CTR_KUBERNETES_HARDENING_GUIDANCE_1.2_20220829.PDF">Kubernetes Hardening Guidance</a> (August 2022). <a href="#fnref:k8s-hardening-guide" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:crowdstrike-cryptojacking-k8s-campaign" role="doc-endnote">
+      <p><a href="https://www.crowdstrike.com/blog/crowdstrike-discovers-first-ever-dero-cryptojacking-campaign-targeting-kubernetes/">CrowdStrike Discovers First-Ever Dero Cryptojacking Campaign Targeting Kubernetes</a> <a href="#fnref:crowdstrike-cryptojacking-k8s-campaign" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:emptyDir" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/storage/volumes/#emptydir">Kubernetes Documentation - emptyDir</a> <a href="#fnref:emptyDir" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:network-policies" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/services-networking/network-policies/">Kubernetes Documentation - Network Policies</a> <a href="#fnref:network-policies" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:limit-ranges" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/policy/limit-range/">Kubernetes Documentation - Limit Ranges</a> <a href="#fnref:limit-ranges" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:resource-quotas" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/policy/resource-quotas/">Kubernetes Documentation - Resource Quotas</a> <a href="#fnref:resource-quotas" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:pid-limit" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/policy/pid-limiting/">Kubernetes Documentation - Process ID Limits And Reservations</a> <a href="#fnref:pid-limit" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kms-encryption" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/tasks/administer-cluster/kms-provider/#encrypting-your-data-with-the-kms-provider">Kubernetes Documentation - Using a KMS provider for data encryption</a> <a href="#fnref:kms-encryption" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Kubernetes" /><category term="Security" /><summary type="html"><![CDATA[As a containerized scheduling platform, Kubernetes has become an essential part of the infrastructure in many enterprises and production environments. However, due to its complexity, Kubernetes’ execution environment also faces many security challenges and potential issues. The United States National Security Agency (NSA) and Cybersecurity and Infrastructure Security Agency (CISA) released a network security report called Kubernetes Hardening Guidance in 2022 1 (full document 2). As a guide to strengthen Kubernetes, the guide not only aims to provide relevant strengthening policies for the NSA, CISA, and key infrastructure for running Kubernetes clusters for federal and public agencies in the United States, but also details the security threats hidden in the Kubernetes environment and provides relevant configuration guidelines to minimize its security risks. For Kubernetes administrators, this guide is a very useful reference resource. NSA, CISA release Kubernetes Hardening Guidance release Kubernetes Hardening Guidance &#8617; Kubernetes Hardening Guidance (August 2022). &#8617;]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2023/nsa-kubernetes-hardening-guide/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2023/nsa-kubernetes-hardening-guide/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry><title type="html">Amazon ECS Finally Support Task Definition Deletion</title><link href="https://easontechtalk.com/ecs-support-task-definition-deletion/" rel="alternate" type="text/html" title="Amazon ECS Finally Support Task Definition Deletion" /><published>2023-03-10T00:00:00+00:00</published><updated>2023-03-10T00:00:00+00:00</updated><id>https://easontechtalk.com/ecs-support-task-definition-deletion</id><content type="html" xml:base="https://easontechtalk.com/ecs-support-task-definition-deletion/"><![CDATA[<p>Dating back to 2015, Amazon ECS was officially GA and start to support run container workload on AWS.<sup id="fnref:ecs-ga" role="doc-noteref"><a href="#fn:ecs-ga" class="footnote" rel="footnote">1</a></sup>; However, it only had the <code>DeregisterTaskDefinition</code><sup id="fnref:DeregisterTaskDefinition-API" role="doc-noteref"><a href="#fn:DeregisterTaskDefinition-API" class="footnote" rel="footnote">2</a></sup> API to deregister the specific task definition revision.</p>
+
+<p>While working with ECS, you might have come across situations where you need to delete an outdated or unused task definition. Until recently, ECS still did not support deleting task definitions, leaving many users interested to know when is task definition deletion supported.</p>
+
+<p>Fortunately, AWS has now added support for task definition deletion, making it easier for users to manage their ECS environments.<sup id="fnref:ecs-fr-685" role="doc-noteref"><a href="#fn:ecs-fr-685" class="footnote" rel="footnote">3</a></sup></p>
+
+<h2 id="whats-the-change">What’s the change?</h2>
+
+<p>On February 27, 2023, Amazon ECS announced now it supports deletion of inactive task definition revisions.<sup id="fnref:whats-new-ecs-task-definition-deletion" role="doc-noteref"><a href="#fn:whats-new-ecs-task-definition-deletion" class="footnote" rel="footnote">4</a></sup></p>
+
+<p>When a user creates a task definition, a new revision is automatically created for it(e.g. <code>myTaskDefinition:1</code>, <code>myTaskDefinition:2</code> … etc). Each revision is immutable, which means that it cannot be deleted or modified once it is created. This was the main reason why task definition deletion was not supported earlier. Even if a user deleted all the tasks that used a specific task definition revision, the revision would still be present, taking up storage space and cluttering the ECS console.</p>
+
+<p>Before this change, users could only mark the task definition revision as <code>INACTIVE</code> but cannot delete. Previously, <code>INACTIVE</code> task definition revisions remained discoverable in user’s account indefinitely.</p>
+
+<p>Now this change enables customers to delete inactive task definition revisions programmatically or via the Amazon ECS console. With this new capability, customers can now programmatically delete inactive task definition revisions or delete them via the Amazon ECS console. This change simplifies resource management and improves security posture by enabling customers to permanently delete task definition revisions that are no longer needed or contain undesirable configurations</p>
+
+<p><img src="/assets/images/2023/ecs-support-task-definition-deletion/ecs-console-deletion-option.png" alt="Task definition deletion option" /></p>
+
+<h2 id="why-having-task-definition-deletion-is-so-important">Why having task definition deletion is so important?</h2>
+
+<p>When you store your credential pass it to your container through the environment variables, you may expose the unwanted security concern if you realize that the task definition will not be deleted. Here is an example of how this could happen:</p>
+
+<pre><code class="language-json">{
+    "family": "",
+    "containerDefinitions": [
+        {
+            "name": "",
+            "image": "mysql",
+            ...
+            "environment": [
+                {
+                    "name": "MYSQL_ROOT_PASSWORD",
+                    "value": "mySecretPassword"
+                }
+            ],
+            ...
+        }
+    ],
+    ...
+}
+</code></pre>
+
+<p>In the past, the task definition could only be set as <code>INACTIVE</code> status and could not be removed. If an IAM user or IAM role had permission to describe the task definition, they could see the credential data that you might not expect them to have access to.</p>
+
+<pre><code class="language-bash">$ aws ecs describe-task-definition --task-definition myTaskDefinition:2
+
+{
+    "taskDefinition": {
+        "containerDefinitions": [
+            {
+                "name": "web-service",
+                "environment": [
+                    {
+                        "name": "MYSQL_ROOT_PASSWORD",
+                        "value": "mySecretPassword"
+                    }
+                ],
+                ...
+            }
+        ],
+        "family": "myTaskDefinition",
+        "revision": 2,
+        "status": "INACTIVE",
+        ...
+}
+</code></pre>
+
+<p>As task definition can leak sensitive detail even when they are in <code>INACTIVE</code> status, it is recommended to use AWS Secrets Manager or AWS Systems Manager Parameter Store, both of which support injection as environment variables in the container.</p>
+
+<p>Regardless of whether you store the credential in AWS Secrets Manager or AWS Systems Manager Parameter Store, you now have the option to permanently delete the task definition on the AWS Console, using programmable DeleteTaskDefinitions<sup id="fnref:DeleteTaskDefinitions-API" role="doc-noteref"><a href="#fn:DeleteTaskDefinitions-API" class="footnote" rel="footnote">5</a></sup> API or AWS CLI command:</p>
+
+<pre><code>$ aws ecs delete-task-definitions --task-definitions &lt;task name:revision&gt;
+</code></pre>
+
+<h2 id="conclusion">Conclusion</h2>
+
+<p>After 8 years, Amazon ECS finally has the support for task definition deletion. Task definition deletion in Amazon ECS helps reduce clutter in your ECS console, automate the task definition deletion process, and keep your environment clean.</p>
+
+<p>What an exciting feature launch!</p>
+
+<h2 id="references">References</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:ecs-ga" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/document_history.html">Amazon ECS history</a> <a href="#fnref:ecs-ga" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:DeregisterTaskDefinition-API" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DeregisterTaskDefinition.html">Amazon ECS API - DeregisterTaskDefinition</a> <a href="#fnref:DeregisterTaskDefinition-API" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:ecs-fr-685" role="doc-endnote">
+      <p><a href="https://github.com/aws/containers-roadmap/issues/685">[ECS] [request]: Delete task definitions #685</a> <a href="#fnref:ecs-fr-685" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:whats-new-ecs-task-definition-deletion" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/about-aws/whats-new/2023/02/amazon-ecs-deletion-inactive-task-definition-revisions/">Amazon ECS now supports deletion of inactive task definition revisions</a> <a href="#fnref:whats-new-ecs-task-definition-deletion" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:DeleteTaskDefinitions-API" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DeleteTaskDefinitions.html">Amazon ECS API - DeleteTaskDefinitions</a> <a href="#fnref:DeleteTaskDefinitions-API" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Container Service (ECS)" /><category term="Container" /><summary type="html"><![CDATA[Dating back to 2015, Amazon ECS was officially GA and start to support run container workload on AWS.1; However, it only had the DeregisterTaskDefinition2 API to deregister the specific task definition revision. Amazon ECS history &#8617; Amazon ECS API - DeregisterTaskDefinition &#8617;]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2023/ecs-support-task-definition-deletion/cover.png" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2023/ecs-support-task-definition-deletion/cover.png" xmlns:media="http://search.yahoo.com/mrss/" /></entry><entry><title type="html">Launch task with Amazon ECS and Bottlerocket</title><link href="https://easontechtalk.com/launch-ecs-task-with-bottlerocket/" rel="alternate" type="text/html" title="Launch task with Amazon ECS and Bottlerocket" /><published>2023-03-01T00:00:00+00:00</published><updated>2023-03-01T00:00:00+00:00</updated><id>https://easontechtalk.com/launch-ecs-task-with-bottlerocket</id><content type="html" xml:base="https://easontechtalk.com/launch-ecs-task-with-bottlerocket/"><![CDATA[<p>Amazon Elastic Container Service (ECS) is a powerful service for managing containerized applications on Amazon Web Services (AWS). It provides a simple way to launch and scale containerized applications, making it an ideal choice for organizations looking to deploy their applications quickly and efficiently. In this blog post, we’ll explore how to launch a container (task) with Amazon ECS and Bottlerocket, a new open-source operating system designed specifically for running containers.</p>
+
+<h2 id="introduction">Introduction</h2>
+
+<h3 id="overview-of-amazon-ecs-and-bottlerocket">Overview of Amazon ECS and Bottlerocket</h3>
+
+<p>Bottlerocket is a lightweight, secure, and efficient operating system that’s optimized for running containers. It’s designed to provide a minimal, immutable, and easy-to-update operating system for running container workloads at scale. By using Bottlerocket with Amazon ECS, you can easily launch and manage your containerized applications with minimal overhead.</p>
+
+<h3 id="benefits-of-using-bottlerocket-with-amazon-ecs-difference-between-general-ecs-optimized-ami">Benefits of using Bottlerocket with Amazon ECS (Difference between general ECS-optimized AMI)</h3>
+
+<p>The major difference is that the Bottlerocket was designed as secure and lightweight operating system to run container workload. Here comes out few considerations you need to know when using the OS:</p>
+
+<ul>
+  <li>The root filesystem in Bottlerocket is marked as read-only and cannot be directly modified by userspace processes.</li>
+  <li>By default, you will not be able to SSH into the Bottlerocket instance.</li>
+</ul>
+
+<h2 id="start-with-bottlerocket">Start with Bottlerocket</h2>
+
+<h3 id="creating-a-task-definition">Creating a Task Definition</h3>
+
+<p>To get started with launching a task using Amazon ECS and Bottlerocket, you’ll first need to create a task definition that describes your containerized application. If you are already familiar with Amazon ECS, there is no difference for the task definition between using general ECS-optimized AMI and Bottlerocket AMI. If you have a task definition, you can skip to the next part.</p>
+
+<p>A task definition generally is a blueprint to describe the specification and how you will run your container(s). On Amazon ECS, container(s) should be encapsulated as the running unit called <strong>Task</strong>, and this is the reason why we need to have a <strong>task definition</strong>. In the task definition, you can specify the image, resources, environment variables, and other settings that your application needs to run. Once you’ve created your task definition, you can then create a task, which is a running instance of your application.</p>
+
+<p>Let’s create a task definition first. Simply go to task definition page and create a new task definition with JSON:</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-create-task-definition-with-json.png" alt="Create new task definition with JSON" /></p>
+
+<p>In this sample, it describe to launch the  the container image (<code>easoncao/ecs-demo-app</code>), request <code>128</code> vCPU unit and <code>128</code> MB memory unit. It also set the <code>hostPort</code> as <code>0</code> to map the container port <code>80</code>, which can expose the container service to the dynamic port when running the task on my Bottlerocket instance:</p>
+
+<pre><code class="language-bash">{
+    "containerDefinitions": [
+        {
+            "name": "demo",
+            "image": "easoncao/ecs-demo-app:latest",
+            "cpu": 128,
+            "memory": 128,
+            "portMappings": [
+                {
+                    "containerPort": 80,
+                    "hostPort": 0,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true
+        }
+    ],
+    "family": "easontechtalk-demo",
+    "requiresCompatibilities": [
+        "EC2"
+    ]
+}
+</code></pre>
+
+<h3 id="creating-an-ecs-cluster">Creating an ECS cluster</h3>
+
+<p>To launch your task with Bottlerocket, you’ll need to create an ECS cluster and register your Bottlerocket instances with it. The new ECS console simplified the experience for creating a new clsuter. You can go to the <a href="https://console.aws.amazon.com/ecs/v2/clusters">ECS Console</a>, select <strong>Clusters</strong> and click the <strong>Create cluster</strong> button, follow the instruction to complete the creation:</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-create-cluster-console.png" alt="Create an ECS Cluster in ECS Console" /></p>
+
+<p>If you prefer to have CLI experience, you also can use AWS ECS CLI command<sup id="fnref:aws-cli-ecs-create-cluster" role="doc-noteref"><a href="#fn:aws-cli-ecs-create-cluster" class="footnote" rel="footnote">1</a></sup>. The following command will create an ECS Cluster <code>easontechtalk-bottlerocket</code> in <code>eu-west-1</code> region:</p>
+
+<pre><code class="language-bash">aws ecs create-cluster --cluster-name easontechtalk-bottlerocket --region eu-west-1
+</code></pre>
+
+<p>If you are using AWS Console, under <strong>Infrastructure</strong> section, you can check <strong>Amazon ECS instances</strong> option to configure EC2 Auto Scaling Group and launch the instances. When you select <strong>Create new ASG</strong>, you will have option for <strong>Operating system/Architecture</strong>, which can choose Bottlerocket as your operating system. But if you would like to launch the instances by yourself, you can create them later.</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-create-cluster-asg-select-bottlerocket-os.png" alt="Create cluster and select Bottlerocket OS" /></p>
+
+<h3 id="registering-bottlerocket-instances">Registering Bottlerocket instances</h3>
+
+<p>If you prefer to create and manage instances on your own, you can simply find the Bottlerocket AMI ID and launch it. To find the corresponding AMI ID, you can use AWS CLI command or use the AMI quick link<sup id="fnref:bottlerocket-ami-links" role="doc-noteref"><a href="#fn:bottlerocket-ami-links" class="footnote" rel="footnote">2</a></sup> to retrieve the AMI ID value:</p>
+
+<pre><code>https://console.aws.amazon.com/systems-manager/parameters/aws/service/bottlerocket/aws-ecs-1/x86_64/latest/image_id/description?region=&lt;REGION&gt;#
+</code></pre>
+
+<p>For example, here is the example to get the latest Bottlerocket x86_64 AMI ID in <code>eu-west-1</code> region. I will get the AMI ID <code>ami-0d5571466e5537410</code>:</p>
+
+<ul>
+  <li><a href="https://console.aws.amazon.com/systems-manager/parameters/aws/service/bottlerocket/aws-ecs-1/x86_64/latest/image_id/description?region=eu-west-1">https://console.aws.amazon.com/systems-manager/parameters/aws/service/bottlerocket/aws-ecs-1/x86_64/latest/image_id/description?region=eu-west-1</a></li>
+</ul>
+
+<p>(AWS CLI)</p>
+<pre><code class="language-bash">aws ssm get-parameter --region eu-west-1 \
+    --name "/aws/service/bottlerocket/aws-ecs-1/x86_64/latest/image_id" \
+        --query Parameter.Value --output text
+
+# Output
+ami-0d5571466e5537410
+</code></pre>
+
+<p>Once we got the AMI ID for the Bottlerocket OS, the next step is to launch the EC2 instance and register the instance to the ECS cluster through the bootstrapping process. Now you can go to launch EC2 instance page and select the AMI:</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ec2-launch-select-bottlerocket-ami.png" alt="Select Bottlerocket AMI" />
+<img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ec2-launch-ami-overview.png" alt="Using Bottlerocket AMI Overview" /></p>
+
+<p>Make sure you select the IAM Profle (IAM Role) to allow this instance can have permission to register to your ECS Cluster (Usually is <code>ecsInstanceRole</code>. See more about how to check the IAM Role<sup id="fnref:ecs-container-instance-iam-role" role="doc-noteref"><a href="#fn:ecs-container-instance-iam-role" class="footnote" rel="footnote">3</a></sup>). If you know how to register container instances by using general ECS-optimized AMI, the difference here is the UserData content:</p>
+
+<p>(General ECS-optimized AMI)</p>
+
+<pre><code class="language-bash">#!/bin/bash
+echo "ECS_CLUSTER=CLUSTER_NAME" &gt;&gt; /etc/ecs/ecs.config
+</code></pre>
+
+<p>(Bottlerocket AMI)</p>
+
+<pre><code class="language-bash">[settings.ecs]
+cluster = "CLUSTER_NAME"
+</code></pre>
+
+<p>Replace <code>CLUSTER_NAME</code> as your own cluster name. In this example, I paste my cluster name (<code>easontechtalk-bottlerocket</code>) with the UserData in the <strong>Advanced details</strong> section:</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ec2-launch-bottlerocket-userdata.png" alt="Configure UserData for Bottlerocket AMI Bootstrapping process" /></p>
+
+<p>Once your EC2 instance is up and running, it will automatically register to the ECS Cluster and you can view the detail under the cluster infrastructure tab:</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-cluster-view-container-instance.png" alt="View the container instance" /></p>
+
+<h3 id="launching-a-task-with-bottlerocket">Launching a Task with Bottlerocket</h3>
+
+<p>Now you can run the task in ECS console and specify the detail:</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-console-run-new-task.png" alt="Run new task" /></p>
+
+<p>I choose the task definition revision that I created in the previous step, and run one task:</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/ecs-console-run-task-detail.png" alt="Run new task detail" /></p>
+
+<p>Once your task is launched, you can use the ECS console or CLI to monitor its status. You even can click the task detail and see the container detail to get the network binding information. In this example, my container is deployed on Bottlerocket instance and expose the service port <code>49153</code>:</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/view-ecs-task-container-detail.png" alt="View container network binding detail" /></p>
+
+<p>Because the ECS task is using the default container bridge network. I can visit the instance’s Public IP and use the dynamic port that ECS assigned (<code>49153</code>) to access my container. Make sure you open the security group rule when you are trying to connect. This demo application will show the task detail in the web page:</p>
+
+<p><img src="/assets/images/2023/launch-ecs-task-with-bottlerocket/view-exposed-task-webpage.png" alt="View the task service web page" /></p>
+
+<h2 id="conclusion">Conclusion</h2>
+
+<p>In summary, launching a task with Amazon ECS and Bottlerocket is a simple and efficient way to deploy containerized applications on AWS. By using Bottlerocket’s lightweight and secure operating system, you can streamline your deployment process and reduce your infrastructure overhead.</p>
+
+<h2 id="references">References</h2>
+<ul>
+  <li><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/bootstrap_container_instance.html">Bootstrapping container instances with Amazon EC2 user data</a></li>
+</ul>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:aws-cli-ecs-create-cluster" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/cli/latest/reference/ecs/create-cluster.html">AWS CLI - ECS Create Cluster</a> <a href="#fnref:aws-cli-ecs-create-cluster" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:bottlerocket-ami-links" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-bottlerocket.html#ecs-bottlerocket-retrieve-ami">Using Bottlerocket with Amazon ECS - Retrieving an Amazon ECS-optimized Bottlerocket AMI</a> <a href="#fnref:bottlerocket-ami-links" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:ecs-container-instance-iam-role" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/instance_IAM_role.html">Amazon ECS container instance IAM role</a> <a href="#fnref:ecs-container-instance-iam-role" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>]]></content><author><name>eason</name></author><category term="Amazon Elastic Container Service (ECS)" /><category term="Container" /><summary type="html"><![CDATA[Amazon Elastic Container Service (ECS) is a powerful service for managing containerized applications on Amazon Web Services (AWS). It provides a simple way to launch and scale containerized applications, making it an ideal choice for organizations looking to deploy their applications quickly and efficiently. In this blog post, we’ll explore how to launch a container (task) with Amazon ECS and Bottlerocket, a new open-source operating system designed specifically for running containers.]]></summary><media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://easontechtalk.com/assets/images/2023/launch-ecs-task-with-bottlerocket/cover.jpg" /><media:content medium="image" url="https://easontechtalk.com/assets/images/2023/launch-ecs-task-with-bottlerocket/cover.jpg" xmlns:media="http://search.yahoo.com/mrss/" /></entry></feed>

@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/nsa-kubernetes-hardening-guide/" /-->
+
+<meta http-equiv="Content-Language" content="en">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="As a containerized scheduling platform, Kubernetes has become an essential part of the infrastructure in many enterprises and production environments. However, due to its complexity, Kubernetes’ execution environment also faces many security challenges and potential issues. The United States National Security Agency (NSA) and Cybersecurity and Infrastructure Security Agency (CISA) released a network security report called Kubernetes Hardening Guidance in 2022 1 (full document 2). As a guide to strengthen Kubernetes, the guide not only aims to provide relevant strengthening policies for the NSA, CISA, and key infrastructure for running Kubernetes clusters for federal and public agencies in the United States, but also details the security threats hidden in the Kubernetes environment and provides relevant configuration guidelines to minimize its security risks. For Kubernetes administrators, this guide is a very useful reference resource. NSA, CISA release Kubernetes Hardening Guidance release Kubernetes Hardening Guidance &#8617; Kubernetes Hardening Guidance (August 2022). &#8617;" />
+<meta property="og:description" content="As a containerized scheduling platform, Kubernetes has become an essential part of the infrastructure in many enterprises and production environments. However, due to its complexity, Kubernetes’ execution environment also faces many security challenges and potential issues. The United States National Security Agency (NSA) and Cybersecurity and Infrastructure Security Agency (CISA) released a network security report called Kubernetes Hardening Guidance in 2022 1 (full document 2). As a guide to strengthen Kubernetes, the guide not only aims to provide relevant strengthening policies for the NSA, CISA, and key infrastructure for running Kubernetes clusters for federal and public agencies in the United States, but also details the security threats hidden in the Kubernetes environment and provides relevant configuration guidelines to minimize its security risks. For Kubernetes administrators, this guide is a very useful reference resource. NSA, CISA release Kubernetes Hardening Guidance release Kubernetes Hardening Guidance &#8617; Kubernetes Hardening Guidance (August 2022). &#8617;" />
+<link rel="canonical" href="https://easontechtalk.com/nsa-kubernetes-hardening-guide/" />
+<meta property="og:url" content="https://easontechtalk.com/nsa-kubernetes-hardening-guide/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2023/nsa-kubernetes-hardening-guide/cover.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-06-01T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2023/nsa-kubernetes-hardening-guide/cover.png" />
+<meta property="twitter:title" content="Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2023-06-01T00:00:00+00:00","datePublished":"2023-06-01T00:00:00+00:00","description":"As a containerized scheduling platform, Kubernetes has become an essential part of the infrastructure in many enterprises and production environments. However, due to its complexity, Kubernetes’ execution environment also faces many security challenges and potential issues. The United States National Security Agency (NSA) and Cybersecurity and Infrastructure Security Agency (CISA) released a network security report called Kubernetes Hardening Guidance in 2022 1 (full document 2). As a guide to strengthen Kubernetes, the guide not only aims to provide relevant strengthening policies for the NSA, CISA, and key infrastructure for running Kubernetes clusters for federal and public agencies in the United States, but also details the security threats hidden in the Kubernetes environment and provides relevant configuration guidelines to minimize its security risks. For Kubernetes administrators, this guide is a very useful reference resource. NSA, CISA release Kubernetes Hardening Guidance release Kubernetes Hardening Guidance &#8617; Kubernetes Hardening Guidance (August 2022). &#8617;","headline":"Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA","image":"https://easontechtalk.com/assets/images/2023/nsa-kubernetes-hardening-guide/cover.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/nsa-kubernetes-hardening-guide/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/nsa-kubernetes-hardening-guide/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/" alt="Home">Home</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/about/" alt="About">About</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/tw/" alt="中文 Chinese">中文 Chinese</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2023/nsa-kubernetes-hardening-guide/cover.png" alt="Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                        <li>
+                         <a href="/categories#security">Security</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>As a containerized scheduling platform, Kubernetes has become an essential part of the infrastructure in many enterprises and production environments. However, due to its complexity, Kubernetes’ execution environment also faces many security challenges and potential issues. The United States National Security Agency (NSA) and Cybersecurity and Infrastructure Security Agency (CISA) released a network security report called Kubernetes Hardening Guidance in 2022 <sup id="fnref:nsa-cisa-press" role="doc-noteref"><a href="#fn:nsa-cisa-press" class="footnote" rel="footnote">1</a></sup> (full document <sup id="fnref:k8s-hardening-guide" role="doc-noteref"><a href="#fn:k8s-hardening-guide" class="footnote" rel="footnote">2</a></sup>). As a guide to strengthen Kubernetes, the guide not only aims to provide relevant strengthening policies for the NSA, CISA, and key infrastructure for running Kubernetes clusters for federal and public agencies in the United States, but also details the security threats hidden in the Kubernetes environment and provides relevant configuration guidelines to minimize its security risks. For Kubernetes administrators, this guide is a very useful reference resource.</p>
+
+<h2 id="purpose-of-providing-kubernetes-hardening-guidance">Purpose of Providing Kubernetes Hardening Guidance</h2>
+
+<p>The purpose of this guide is to provide the best security practices when using Kubernetes to reduce its risks. In this document, various topics are mentioned, from authentication, authorization, network security, to monitoring policies, and useful tools and techniques are provided to strengthen the security measures of Kubernetes clusters.</p>
+
+<h2 id="what-does-this-guide-say">What does this guide say?</h2>
+
+<p>After reading this document, it can be noticed that the overview section of the document directly mentions the core security issues around which the entire document revolves. The following dozens of pages describe in detail how to set up and protect the Kubernetes environment and related security issues. In this content, not only from the perspective of the cluster system administrator, but also from the perspective of the system developer, relevant configuration recommendations are proposed to avoid common configuration errors, and relevant practices, mitigation, and strengthening measures are covered, mainly including:</p>
+
+<ul>
+  <li>Scan containers and pods to find vulnerabilities or configuration errors</li>
+  <li>Run containers and pods with minimum permissions</li>
+  <li>Use network isolation policies (Network Policy) to control the scope of threats</li>
+  <li>Use firewalls to restrict unnecessary network connections and use encryption to protect confidentiality</li>
+  <li>Use sound authentication and authorization mechanisms to limit user and administrator access and limit the scope of possible attacks</li>
+  <li>Log and review activity logs (Audit Log) to detect potential malicious activity in a timely manner</li>
+  <li>Regularly review all Kubernetes configurations, use vulnerability scanning tools to ensure that risks are properly handled, and plan upgrades regularly</li>
+</ul>
+
+<h2 id="main-content-of-kubernetes-hardening-guidance">Main Content of Kubernetes Hardening Guidance</h2>
+
+<p>This guide is mainly divided into three parts: authorization and authentication, network security, and monitoring</p>
+
+<h3 id="authorization-and-authentication">Authorization and Authentication</h3>
+
+<p>Authorization and authentication are the first step in protecting the Kubernetes environment. In this section, the guide introduces some best practices, including using appropriate authentication methods, restricting access to the Kubernetes API, and using appropriate roles and permissions. The common configuration policy is Kubernetes’ own Role-Based Access Control (RBAC).</p>
+
+<p>Access to the Kubernetes environment should be protected through multi-factor authentication (MFA). In addition, the configuration of permissions should follow the principle of least privilege to minimize the attack surface. At the same time, the importance of using appropriate roles and permissions (Role-Based Access Control) to limit access to the Kubernetes API is emphasized.</p>
+
+<h3 id="network-security">Network Security</h3>
+
+<p>In this section, the guide introduces some best practices, including using network isolation, restricting access to the Kubernetes network, and using encrypted communication.</p>
+
+<p>In this document, several recommendations are mentioned to use appropriate network policies and restrict communication between pods. The document also covers relevant recommendations for using encrypted communication to protect sensitive data.</p>
+
+<h3 id="monitoring-and-threat-detection">Monitoring and Threat Detection</h3>
+
+<p>Monitoring is critical to protecting the Kubernetes environment. In this section, the guide introduces some best practices, including using appropriate monitoring tools, paying attention to important events and alerts, and establishing response plans.</p>
+
+<p>The guide recommends using appropriate monitoring tools to monitor the status and behavior of the Kubernetes environment. At the same time, the necessity of establishing response plans to respond to security incidents in the environment is emphasized. The guide provides some example events to help enterprises better understand which events may pose risks to their environment.</p>
+
+<h2 id="threat-model-of-kubernetes-clusters">Threat Model of Kubernetes Clusters</h2>
+
+<p>As the business and computing load that Kubernetes can carry increase, more and more applications and network services are running on Kubernetes as a containerized scheduling foundation platform. In this case, this also means that the content running in the Kubernetes cluster may contain many critical information of enterprises and organizations, making Kubernetes a high-value target for attackers to steal data or computing power. For example: In addition to being a possible target for DDoS attacks, a common attack method is to deploy malware for bitcoin or cryptocurrency mining. CrowdStrike also released a common attack method this year, pointing out that mining attackers disguise mining programs as Pause Containers to make it difficult for administrators to detect <sup id="fnref:crowdstrike-cryptojacking-k8s-campaign" role="doc-noteref"><a href="#fn:crowdstrike-cryptojacking-k8s-campaign" class="footnote" rel="footnote">3</a></sup>.</p>
+
+<p>In this document, a threat modeling is specifically listed for existing Kubernetes clusters, and some of the most likely threats that may be encountered are:</p>
+
+<ul>
+  <li>Supply Chain: Upstream and third-party software supply chain attack vectors are diverse and difficult to mitigate. This includes product components, services, personnel, and even risks that may include third-party software and suppliers used to build and manage Kubernetes clusters, affecting multiple levels:
+    <ul>
+      <li>Container/application level: Because any application and container can be run and scheduled in Kubernetes, a part of security threats depend heavily on third-party security, developer trustworthiness, and software defenses. A malicious container or application deployed in Kubernetes can pose a security threat.</li>
+      <li>Container runtime: In order to run containers, the container runtime required by the container must be present on each worker node, and downloaded from the storage location of the image. The container runtime plays a critical role in the life cycle of containers, including monitoring system resources and isolating system resources available to containers. Vulnerabilities in the container runtime and related virtualization technologies may cause this isolation to fail and even allow attackers to obtain higher privileges on the system.</li>
+      <li>Infrastructure: The underlying hardware and firmware on which Kubernetes runs are still dependent on the basic system. Any vulnerabilities in the system layer or Kubernetes master node may provide a foothold for malicious attacks.</li>
+    </ul>
+  </li>
+  <li>Malicious attackers: Malicious attackers often exploit vulnerabilities or steal credentials from social engineering. Kubernetes exposes several APIs in its architecture, which allows attackers to further exploit these APIs for malicious operations, including:
+    <ul>
+      <li>Control Plane: Kubernetes master node has many components, and if the API Server is not properly configured for permission management, attackers may access the Kubernetes cluster arbitrarily for related malicious operations.</li>
+      <li>Worker Node: In addition to running the container engine, the worker node typically also runs important services such as kubelet and kube-proxy. If these services themselves have vulnerabilities, they may be exploited by hackers.</li>
+      <li>Containerized applications: Applications running in the cluster are a common target for attacks.</li>
+    </ul>
+  </li>
+  <li>Internal threats: One possible threat also includes threats from internal personnel. Internal attackers can use vulnerabilities or privileges given when working in the organization for nefarious purposes.
+    <ul>
+      <li>Cluster Administrator: Kubernetes cluster administrators can control running containers, pods, and even execute arbitrary commands in a containerized environment. This can be mitigated by limiting access to sensitive functionalities through Kubernetes’ built-in RBAC mechanism. However, Kubernetes lacks dual integrity controls (i.e., two different keys required to open a door, with each key held by different people). Additionally, administrators can physically access the system or virtualization management programs (hypervisor), which can compromise the Kubernetes runtime environment.</li>
+      <li>User: Access users in containerized applications may know and possess credentials to access containerized services in the Kubernetes cluster. Once obtained, these credentials can be used for advanced attacks based on vulnerabilities in the software itself.</li>
+      <li>Cloud Service Provider (CSP): Since Kubernetes clusters may run on other service providers, CSPs often need to have multi-layered technical and management controls to protect the system from potential threats and attacks.</li>
+    </ul>
+  </li>
+</ul>
+
+<h2 id="enhancement-for-each-dimensions">Enhancement for Each Dimensions</h2>
+
+<h3 id="kubernetes-pod-security">Kubernetes Pod Security</h3>
+
+<h4 id="running-non-root-containers">Running “Non-root” Containers</h4>
+
+<p>By default, applications running in containers use the root user identity. However, it is possible to deploy and run Pods as non-root users. In the Pod Security section, an example Dockerfile is provided that demonstrates how to use Linux groups and user identities to run the process as a non-root user.</p>
+
+<pre><code>FROM ubuntu:latest
+
+# Update and install the make utility
+RUN apt update &amp;&amp; apt install -y make
+
+# Copy the source from a folder called “code” and build the application with the make utility
+COPY . /code
+RUN make /code
+
+# Create a new user (user1) and new group (group1); then switch into that user’s context
+RUN useradd user1 &amp;&amp; groupadd group1
+USER user1:group1
+
+# Set the default entrypoint for the container
+CMD /code/app
+
+</code></pre>
+
+<p>In addition, Kubernetes provides the <code>securityContext</code> attribute for setting non-root user identities during Pod deployment:</p>
+
+<pre><code>spec:
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+
+</code></pre>
+
+<h4 id="immutable-container-file-systems">Immutable Container File Systems</h4>
+
+<p>By default, applications running inside Pods have permission to write to the container file system. This permission can be exploited by attackers to create files, download malicious code, or modify application code. To enhance security, Kubernetes administrators can set the container file system as read-only and use a Volume (emptyDir<sup id="fnref:emptyDir" role="doc-noteref"><a href="#fn:emptyDir" class="footnote" rel="footnote">4</a></sup>) for write operations for temporary storage (either a file system or tmpfs memory) that is automatically cleared after the container terminates.</p>
+
+<pre><code>spec:
+  containers:
+  - command: ["sleep"]
+    args: ["999"]
+    image: ubuntu:latest
+    name: web
+    securityContext:
+        readOnlyRootFilesystem: true
+    volumeMounts:
+        - mountPath: /writeable/location/here
+          name: volName
+    volumes:
+        - emptyDir: {}
+          name: volName
+
+</code></pre>
+
+<h4 id="building-secure-container-images">Building Secure Container Images</h4>
+
+<p>One common practice for building secure container images is to include image scanning and vulnerability scanning during the CI/CD build and push process. This includes checking for outdated libraries, dependencies, configuration issues, improper permissions, open ports, potential vulnerabilities, and CVEs. Additionally, Kubernetes provides native features and Admission Webhook mechanisms for triggering scans during container deployment. This provides a more comprehensive and flexible security detection mechanism that actively blocks any illegal image deployment and prevents non-compliant Pod deployment settings (such as deploying Privilege Containers) in the Webhook configuration.</p>
+
+<p><img src="/assets/images/2023/nsa-kubernetes-hardening-guide/secure-container-image-build-workflow.png" alt="" />
+(Image source: Kubernetes Hardening Guidance)</p>
+
+<h4 id="other">Other</h4>
+
+<p>The following are other suggestions related to Pod security in this chapter:</p>
+
+<ul>
+  <li>Enhancing Pod Security: Common strategies include applying Pod Security Policies (PSPs - deprecated in later Kubernetes versions) and using Pod Security Admission, which is enabled by default in Kubernetes 1.23.</li>
+  <li>Protecting Pod Service Account Tokens: For execution environments that do not require access to Pod Service Account Tokens, disable the automounting of Service Account Tokens (automountServiceAccountToken: false).</li>
+  <li>Enhancing Container Execution and Virtualization Security at the System Level: For example, enabling seccomp, which is supported by the Kernel, and running container execution environments with hypervisor-supported security virtualization technologies.</li>
+</ul>
+
+<h3 id="network-separation-isolation-and-hardening">Network Separation (Isolation) and Hardening</h3>
+
+<p>Network security is an important part of Kubernetes security. By isolating and hardening various network components in Kubernetes, the risk of network attacks can be significantly reduced. The following measures can be taken:</p>
+
+<h4 id="network-isolation">Network Isolation</h4>
+
+<p>Kubernetes supports <code>NetworkPolicy</code> to set network access rules between Pods and restrict network access sources and destinations to reduce attack risks. Before setting up Network Policy, it is usually necessary to isolate applications in different Kubernetes <code>Namespaces</code> and ensure that the CNI (Container Network Interface) Plugin used supports <code>NetworkPolicy</code><sup id="fnref:network-policies" role="doc-noteref"><a href="#fn:network-policies" class="footnote" rel="footnote">5</a></sup>.</p>
+
+<pre><code>apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: example-access-nginx
+  namespace: &lt;NAMESPACE_NAME&gt;
+spec:
+  podSelector:
+    matchLabels:
+      app: nginx
+  ingress:
+  - from:
+    - podSelector:
+      matchLabels:
+        access: "true"
+
+</code></pre>
+
+<h4 id="resource-usage-policy-settings">Resource Usage Policy Settings</h4>
+
+<p>Kubernetes supports the use of <code>LimitRanges</code><sup id="fnref:limit-ranges" role="doc-noteref"><a href="#fn:limit-ranges" class="footnote" rel="footnote">6</a></sup> (to limit the number of resources that individual Pods or Containers can use in a single Namespace), <code>ResourceQuotas</code><sup id="fnref:resource-quotas" role="doc-noteref"><a href="#fn:resource-quotas" class="footnote" rel="footnote">7</a></sup> (to limit the amount of CPU, memory, and storage resources that can be used in a Namespace), and <code>Process ID (PID)</code> <sup id="fnref:pid-limit" role="doc-noteref"><a href="#fn:pid-limit" class="footnote" rel="footnote">8</a></sup> limits to control available resources for specific Kubernetes Namespaces, Nodes, or Pods.</p>
+
+<pre><code>apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cpu-min-max-demo-lr
+spec:
+  limits
+  - default:
+      cpu: 1
+    defaultRequest:
+      cpu: 0.5
+    max:
+      cpu: 2
+    min:
+      cpu 0.5
+    type: Container
+
+</code></pre>
+
+<p>Resource limit settings can also be applied to the Kubernetes Pod deployment itself:</p>
+
+<pre><code>apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend
+spec:
+  containers:
+  - name: app
+    image: images.my-company.example/app:v4
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "250m"
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+
+</code></pre>
+
+<h4 id="control-plane-hardening">Control Plane Hardening</h4>
+
+<p>This section discusses several enhancements for Kubernetes Master Node security, including:</p>
+
+<ul>
+  <li>Enabling API Server Access Control: Role-Based Access Control (RBAC) can be used to set which users or groups can access the API Server and limit access.</li>
+  <li>Network Encryption: Encryption can be enabled using HTTPS/TLS or other network encryption mechanisms. Since etcd is the most critical component of the entire Kubernetes Cluster, encryption can also be used for communication between etcd and the API Server. This not only increases network transmission security but also reduces the risk of eavesdropping or attack.</li>
+  <li>
+    <p>Avoid exposing the Kubernetes API Server to the network: API Server uses 6443 (or sometimes 443) by default, and these ports should be strengthened and associated with security group rules, including:</p>
+
+    <ul>
+      <li><code>2379-2380</code>: etcd server client API</li>
+      <li><code>10250</code>: kubelet API</li>
+      <li><code>10259</code>: kube-scheduler</li>
+      <li><code>10257</code>: kube-controller-manager</li>
+      <li><code>30000-32767</code>: Ports that may be opened on a Worker Node when using NodePort</li>
+    </ul>
+  </li>
+  <li>Encrypting Secret Objects: By default, Kubernetes Secrets are unencrypted base64-encoded strings, and anyone with Kubernetes API access can obtain sensitive information. Therefore, encryption can be used to encrypt Secrets when writing to etcd using third-party encryption services (such as AWS Key Management Service, KMS) or by adding the <code>--encryption-provider-config</code> parameter to the API Server startup to configure encryption providers <sup id="fnref:kms-encryption" role="doc-noteref"><a href="#fn:kms-encryption" class="footnote" rel="footnote">9</a></sup>.</li>
+</ul>
+
+<h4 id="protecting-sensitive-cloud-infrastructure">Protecting Sensitive Cloud Infrastructure</h4>
+
+<p>Many organizations choose to run Kubernetes in cloud service provider environments. For example, in AWS, administrators can block EC2 Metadata Service (IMDS) access and prevent access to possible credentials (EC2 Instance IAM Role) by setting EC2 properties. The following example shows how to use EC2’s built-in settings or <code>NetworkPolicy</code> to achieve this.</p>
+
+<p>(AWS CLI)</p>
+
+<pre><code>aws ec2 modify-instance-metadata-options --instance-id &lt;value&gt; --http-tokens required --http-put-response-hop-limit 1
+</code></pre>
+
+<p>(NetworkPolicy)</p>
+
+<pre><code>apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-metadata-access
+  namespace: example
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 169.254.169.254/32
+
+</code></pre>
+
+<h3 id="authentication-and-authorization">Authentication and Authorization</h3>
+
+<p>Authentication and authorization are important aspects of Kubernetes security. This chapter provides some best practices, including using appropriate authentication methods, restricting access to the Kubernetes API, and using appropriate roles and permissions. These practices are centered around setting up Role-Based Access Control (RBAC) to protect the Kubernetes environment. Setting up RBAC rules may include:</p>
+
+<ul>
+  <li>Defining roles and permissions for Kubernetes users, groups, and service accounts</li>
+  <li>Binding roles to users, groups, and service accounts</li>
+  <li>Creating custom roles with specific permissions and constraints</li>
+  <li>Limiting namespace access to specific users or groups</li>
+</ul>
+
+<p>However, the focus is mainly on setting up Role-Based Access Control (RBAC) for Kubernetes itself to protect the Kubernetes execution environment. For example, setting up a Role identity that only has read access to Pods:</p>
+
+<pre><code>apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: your-namespace-name
+  name: pod-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "list"]
+
+</code></pre>
+
+<p>To enable this setting, the kube-apiserver must use the necessary parameter (<code>--authorization-mode=RBAC</code>) to support this method.</p>
+
+<h2 id="summary">Summary</h2>
+
+<p>In summary, the Kubernetes Hardening Guidance released by the NSA and CISA provides a comprehensive guide for Kubernetes administrators to minimize the security risks of the Kubernetes environment. The guide covers various aspects of Kubernetes security, including authentication and authorization, network security, and monitoring. By following the best practices and recommendations in this guide, Kubernetes administrators can strengthen the security measures of their Kubernetes clusters and better protect against potential security threats.</p>
+
+<p>As a summary of the content, the following are the key recommendations for each section in this document:</p>
+
+<p><strong>Kubernetes Pod Security</strong></p>
+
+<ul>
+  <li>Run containers with non-root privilege</li>
+  <li>Configure immutable container file systems</li>
+  <li>Create and scan container images for potential vulnerabilities or misconfigurations</li>
+  <li>Use relevant technologies and features to control potential security threats, including:
+    <ul>
+      <li>Prevent running privileged container containers</li>
+      <li>Avoid using less secure features and options such as hostPID, hostIPC, hostNetwork, allowedHostPath</li>
+      <li>Avoid running applications as root user by using RunAsUser attribute</li>
+      <li>Consider enabling security features at the system level (e.g. SELinux, AppArmor, and seccomp)</li>
+    </ul>
+  </li>
+</ul>
+
+<p><strong>Network Isolation and Hardening</strong></p>
+
+<ul>
+  <li>Use firewalls and role-based access control (RBAC) to restrict access to control plane nodes and consider using separate network between control plane components and nodes</li>
+  <li>Limit access to etcd</li>
+  <li>Configure control plane components to use transport layer security (TLS) certificates for authentication and encrypted communication, including encrypting etcd and using TLS protocol for communication</li>
+  <li>Consider configuring NetworkPolicy to isolate resources and set explicit network security policies (NetworkPolicy)</li>
+  <li>Store all certificates and sensitive information encrypted in Kubernetes Secrets rather than in configuration files. Consider enabling services such as KMS to encrypt Kubernetes Secrets resources.</li>
+</ul>
+
+<p><strong>Authentication and Authorization</strong></p>
+
+<ul>
+  <li>Disable anonymous user access to and operation on Kubernetes API Server (enabled by default)</li>
+  <li>Enable RBAC and create individual RBAC policies for users, administrators, developers, and Service Accounts.</li>
+</ul>
+
+<p><strong>Logging and Threat Detection</strong></p>
+
+<ul>
+  <li>Enable audit log operation record for API Server (turned off by default) and Kubernetes event logs for lookup and tracking</li>
+  <li>Configure consistent log collection, monitoring, and alerting systems for applications and containers</li>
+</ul>
+
+<p><strong>Upgrade and Application Security Best Practices</strong></p>
+
+<ul>
+  <li>Update Kubernetes version and security vulnerabilities in real time</li>
+  <li>Conduct vulnerability scans and penetration tests regularly</li>
+  <li>Remove and delete unused components and deployments from the environment</li>
+</ul>
+
+<h2 id="conclusion">Conclusion</h2>
+
+<p>Overall, after reading this Kubernetes Hardening Guide released by NSA and CISA, I feel like I am reviewing the support of Kubernetes itself for security features. I think as a checklist, it is definitely a very useful reference document.</p>
+
+<p>Of course, in many practical applications, Kubernetes deployment and security may be based on organizational culture or even any uncontrollable factors, making it impossible to strengthen all threats one by one. However, as a Kubernetes administrator, by learning and gradually implementing these best practices, you can better protect the Kubernetes runtime environment, reduce potential security risks, and establish a continuous improvement security plan and guide organizational culture enhancement to deal with constantly changing security threats.</p>
+
+<h2 id="references">References</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:nsa-cisa-press" role="doc-endnote">
+      <p><a href="https://www.nsa.gov/Press-Room/News-Highlights/Article/Article/2716980/nsa-cisa-release-kubernetes-hardening-guidance/">NSA, CISA release Kubernetes Hardening Guidance release Kubernetes Hardening Guidance</a> <a href="#fnref:nsa-cisa-press" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-hardening-guide" role="doc-endnote">
+      <p><a href="https://media.defense.gov/2022/Aug/29/2003066362/-1/-1/0/CTR_KUBERNETES_HARDENING_GUIDANCE_1.2_20220829.PDF">Kubernetes Hardening Guidance</a> (August 2022). <a href="#fnref:k8s-hardening-guide" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:crowdstrike-cryptojacking-k8s-campaign" role="doc-endnote">
+      <p><a href="https://www.crowdstrike.com/blog/crowdstrike-discovers-first-ever-dero-cryptojacking-campaign-targeting-kubernetes/">CrowdStrike Discovers First-Ever Dero Cryptojacking Campaign Targeting Kubernetes</a> <a href="#fnref:crowdstrike-cryptojacking-k8s-campaign" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:emptyDir" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/storage/volumes/#emptydir">Kubernetes Documentation - emptyDir</a> <a href="#fnref:emptyDir" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:network-policies" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/services-networking/network-policies/">Kubernetes Documentation - Network Policies</a> <a href="#fnref:network-policies" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:limit-ranges" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/policy/limit-range/">Kubernetes Documentation - Limit Ranges</a> <a href="#fnref:limit-ranges" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:resource-quotas" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/policy/resource-quotas/">Kubernetes Documentation - Resource Quotas</a> <a href="#fnref:resource-quotas" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:pid-limit" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/policy/pid-limiting/">Kubernetes Documentation - Process ID Limits And Reservations</a> <a href="#fnref:pid-limit" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kms-encryption" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/tasks/administer-cluster/kms-provider/#encrypting-your-data-with-the-kms-provider">Kubernetes Documentation - Using a KMS provider for data encryption</a> <a href="#fnref:kms-encryption" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2023-06-01">01 Jun 2023</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/ecs-support-task-definition-deletion/">&laquo; Amazon ECS Finally Support Task Definition Deletion</a>
+                </div>
+              
+              
+                <div class="col-md-6 text-right pr-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/">Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error &raquo;</a>
+                </div>
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#purpose-of-providing-kubernetes-hardening-guidance">Purpose of Providing Kubernetes Hardening Guidance</a></li>
+<li class="toc-entry toc-h2"><a href="#what-does-this-guide-say">What does this guide say?</a></li>
+<li class="toc-entry toc-h2"><a href="#main-content-of-kubernetes-hardening-guidance">Main Content of Kubernetes Hardening Guidance</a></li>
+<li class="toc-entry toc-h2"><a href="#threat-model-of-kubernetes-clusters">Threat Model of Kubernetes Clusters</a></li>
+<li class="toc-entry toc-h2"><a href="#enhancement-for-each-dimensions">Enhancement for Each Dimensions</a></li>
+<li class="toc-entry toc-h2"><a href="#summary">Summary</a></li>
+<li class="toc-entry toc-h2"><a href="#conclusion">Conclusion</a></li>
+<li class="toc-entry toc-h2"><a href="#references">References</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+
+<!-- Begin Default Newsletter Signup Form -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>Sign up to get the update</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail Address" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('Request has been sent!').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('You are in the mailing list!').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/" alt="Home">Home</a>
+    </li>
+    
+    <li>
+      <a href="/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

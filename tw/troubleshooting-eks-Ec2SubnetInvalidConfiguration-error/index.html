@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>EKS Managed Node Group: 解決 Ec2SubnetInvalidConfiguration 錯誤 | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/tw/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/" /-->
+
+<meta http-equiv="Content-Language" content="tw">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>EKS Managed Node Group: 解決 Ec2SubnetInvalidConfiguration 錯誤 | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="EKS Managed Node Group: 解決 Ec2SubnetInvalidConfiguration 錯誤" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="Amazon Elastic Kubernetes Service（EKS）是一個託管的 Kubernetes 服務，使許多 Kubernetes 的管理者能夠在數十分鐘內透過命令快速建立及輕鬆在 AWS 上運行 Kubernetes Cluster，並且簡化了許多操作；2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) 1，並且能夠自動建立和管理 EC2 instances，並將這些 instances 加入到 Kubernetes 集群中，使得用戶能夠更輕鬆新增、擴展 Kubernetes Cluster 所需要的運算節點數量，甚至能夠透過 API 或一鍵集成的方式升級節點的版本。 Extending the EKS API: Managed Node Groups &#8617;" />
+<meta property="og:description" content="Amazon Elastic Kubernetes Service（EKS）是一個託管的 Kubernetes 服務，使許多 Kubernetes 的管理者能夠在數十分鐘內透過命令快速建立及輕鬆在 AWS 上運行 Kubernetes Cluster，並且簡化了許多操作；2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) 1，並且能夠自動建立和管理 EC2 instances，並將這些 instances 加入到 Kubernetes 集群中，使得用戶能夠更輕鬆新增、擴展 Kubernetes Cluster 所需要的運算節點數量，甚至能夠透過 API 或一鍵集成的方式升級節點的版本。 Extending the EKS API: Managed Node Groups &#8617;" />
+<link rel="canonical" href="https://easontechtalk.com/tw/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/" />
+<meta property="og:url" content="https://easontechtalk.com/tw/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-06-03T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png" />
+<meta property="twitter:title" content="EKS Managed Node Group: 解決 Ec2SubnetInvalidConfiguration 錯誤" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2023-06-03T00:00:00+00:00","datePublished":"2023-06-03T00:00:00+00:00","description":"Amazon Elastic Kubernetes Service（EKS）是一個託管的 Kubernetes 服務，使許多 Kubernetes 的管理者能夠在數十分鐘內透過命令快速建立及輕鬆在 AWS 上運行 Kubernetes Cluster，並且簡化了許多操作；2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) 1，並且能夠自動建立和管理 EC2 instances，並將這些 instances 加入到 Kubernetes 集群中，使得用戶能夠更輕鬆新增、擴展 Kubernetes Cluster 所需要的運算節點數量，甚至能夠透過 API 或一鍵集成的方式升級節點的版本。 Extending the EKS API: Managed Node Groups &#8617;","headline":"EKS Managed Node Group: 解決 Ec2SubnetInvalidConfiguration 錯誤","image":"https://easontechtalk.com/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/tw/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/tw/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/tw/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/tw/" alt="首頁">首頁</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/tw/about/" alt="關於">關於</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/?" alt="English">English</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png" alt="EKS Managed Node Group: 解決 Ec2SubnetInvalidConfiguration 錯誤">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/tw/categories#amazon-elastic-kubernetes-service-eks">Amazon Elastic Kubernetes Service (EKS)</a>
+                        </li>
+                        
+                        <li>
+                         <a href="/tw/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">EKS Managed Node Group: 解決 Ec2SubnetInvalidConfiguration 錯誤</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>Amazon Elastic Kubernetes Service（EKS）是一個託管的 Kubernetes 服務，使許多 Kubernetes 的管理者能夠在數十分鐘內透過命令快速建立及輕鬆在 AWS 上運行 Kubernetes Cluster，並且簡化了許多操作；2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) <sup id="fnref:eks-managed-nodegroup" role="doc-noteref"><a href="#fn:eks-managed-nodegroup" class="footnote" rel="footnote">1</a></sup>，並且能夠自動建立和管理 EC2 instances，並將這些 instances 加入到 Kubernetes 集群中，使得用戶能夠更輕鬆新增、擴展 Kubernetes Cluster 所需要的運算節點數量，甚至能夠透過 API 或一鍵集成的方式升級節點的版本。</p>
+
+<p>然而，在新增、升級 Managed Node Groups 的過程，有可能會遇到 <code>Ec2SubnetInvalidConfiguration</code> 錯誤，因此，本文將進一步分析這個錯誤的原因、常見情境以及解決方法。</p>
+
+<h2 id="如何確認該問題">如何確認該問題</h2>
+
+<p>要檢查 EKS Managed Node Groups 是否存在 <code>Ec2SubnetInvalidConfiguration</code> 錯誤，可以透過 EKS Console 或是 AWS CLI 命令確認是否存在任何健康檢查錯誤 (Health Issue)。例如，透過點擊 Cluster 底下的 <code>Compute</code> 頁籤 &gt; 點擊 <code>Node groups</code> 進入到節點組的詳細頁面後，可以檢查 <code>Health Issues</code> 頁籤是否存在相關的錯誤訊息：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-create-failed.png" alt="" /></p>
+
+<p>根據文件提到 EKS Managed Node Group 的升級流程 <sup id="fnref:eks-managed-nodegroup-update-behavior" role="doc-noteref"><a href="#fn:eks-managed-nodegroup-update-behavior" class="footnote" rel="footnote">2</a></sup>，如果升級或是新建節點超過 15-20 分鐘後卡住，很可能是某些原因使得工作節點在運作時存在一些問題，過一段時間後，通常有機會透過這些資訊進一步排查可能的原因。以下是使用 AWS CLI 命令的範例：</p>
+
+<pre><code class="language-bash">$ aws eks describe-nodegroup --nodegroup-name broken-nodegroup --cluster eks --region eu-west-1
+{
+    "nodegroup": {
+        "nodegroupName": "broken-nodegroup",
+        "clusterName": "eks",
+        "version": "1.25",
+        "releaseVersion": "1.25.9-20230526",
+        "status": "CREATE_FAILED",
+        "capacityType": "ON_DEMAND",
+        "subnets": [
+            "subnet-AAAAAAAAAAAAAAAAA",
+            "subnet-BBBBBBBBBBBBBBBBB"
+        ],
+        "amiType": "AL2_x86_64",
+        "health": {
+            "issues": [
+                {
+                    "code": "Ec2SubnetInvalidConfiguration",
+                    "message": "One or more Amazon EC2 Subnets of [subnet-AAAAAAAAAAAAAAAAA, subnet-BBBBBBBBBBBBBBBBB] for node group broken-nodegroup does not automatically assign public IP addresses to instances launched into it. If you want your instances to be assigned a public IP address, then you need to enable auto-assign public IP address for the subnet. See IP addressing in VPC guide: https://docs.aws.amazon.com/vpc/latest/userguide/vpc-ip-addressing.html#subnet-public-ip",
+                    "resourceIds": [
+                        "subnet-AAAAAAAAAAAAAAAAA",
+                        "subnet-BBBBBBBBBBBBBBBBB"
+                    ]
+                }
+            ]
+        },
+        "updateConfig": {
+            "maxUnavailable": 1
+        },
+        ...
+    }
+}
+</code></pre>
+
+<p>上述範例為在建立節點組時發生失敗並且處於 <code>CREATE_FAILED</code> 狀態。</p>
+
+<h2 id="常見情境和發生原因">常見情境和發生原因</h2>
+
+<p>按照錯誤例外的定義 <sup id="fnref:eks-issues" role="doc-noteref"><a href="#fn:eks-issues" class="footnote" rel="footnote">3</a></sup>，可以簡單得知這個錯誤通常是由於 EKS Managed Node Group 所指定的 subnet 沒有啟用 auto-assign public IP address (自動分配 IP 地址) 導致。</p>
+
+<p>預設情況下，當 Managed Node Group 在建立 EC2 instances 時，會需要依賴 Subnet 本身啟用這項功能，如果 subnet 沒有啟用 auto-assign public IP address，EC2 instances 會無法獲取到公開的 IP 位址 (Public IPv4)，因此將無法與 Internet 進行通訊。EKS Managed Node Groups 的這項檢查同時衍生了兩個不同的使用情境：Public Subnet (公有子網) 跟 Private Subnet (私有子網)。</p>
+
+<p>Public Subnet 與 Private Subnet 是指在 Amazon Virtual Private Cloud (VPC) 中設定不同的 Subnet。其中，Public Subnet 意味著在這個 Subnet 中的資源可以直接與 Internet 進行通訊、連到公開的網際網路，而 Private Subnet 則無法直接與 Internet 進行通訊：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/subnet-diagram.png" alt="" /></p>
+
+<p>(圖片來源：Amazon Virtual Private Cloud 使用手冊 <sup id="fnref:subnet-diagram" role="doc-noteref"><a href="#fn:subnet-diagram" class="footnote" rel="footnote">4</a></sup>)</p>
+
+<p><strong>簡單來說，如果 Subnet 存在指向 Internet Gateway 資源的路由 (<code>0.0.0.0/0</code>)，通常可以視為預期這個 Subnet 將能夠直接通往 Internet 的大門，反之，這個 Subnet 預計規劃存在有限且私有的網路環境中。</strong></p>
+
+<h3 id="在-public-subnet-公有子網-遇到這個錯誤">在 Public Subnet (公有子網) 遇到這個錯誤</h3>
+
+<p>在之前，由於 EKS 在建立 Managed Node Groups 時預設會幫所有節點組底下的 Node Groups 啟用跟配發 Public IPv4 地址 (不論是否放在 Public Subnet 或是 Private Subnet)，但目前這項功能已經於 2020 年得到更新 <sup id="fnref:eks-feature-request-607" role="doc-noteref"><a href="#fn:eks-feature-request-607" class="footnote" rel="footnote">5</a></sup>。因此，如果你預期你部署的 EKS Managed Node Groups 需要配發公開的 IPv4 地址，並且允許直接與網際網路連線。</p>
+
+<p>在這種情況下，在建立或是升級 Managed Node Groups 使用 Public Subnet 時，需要確保 Subnet 本身的設定允許自動配發 Public IPv4 地址 (<code>MapPublicIpOnLaunch</code>)：</p>
+
+<pre><code class="language-bash">$ aws ec2 describe-subnets --subnet-ids subnet-XXXXXXXXX
+"Subnets": [
+        {
+            "CidrBlock": "192.168.64.0/19",
+            "MapPublicIpOnLaunch": true,
+            "State": "available",
+            "SubnetId": "subnet-XXXXXXXXXXX",
+            "VpcId": "vpc-XXXXXXXXXXX",
+            ...
+        }
+    ]
+</code></pre>
+
+<h3 id="在-private-subnet-私有子網-遇到這個錯誤">在 Private Subnet (私有子網) 遇到這個錯誤</h3>
+
+<p>但你可能會說：「我本來預期這個 Subnet 就是 Private Subnet，甚至我可能一開始建立時都正常」您可能會好奇，為什麼 EKS Managed Groups 可能在運行階段或是升級過程會提示我的 Node Groups 指定的 Subnet 沒有自動關聯 Public IPv4 地址。</p>
+
+<p>對於 Amazon EKS，VPC 關聯 Subnet 的屬性仍適用前面所提到的原則 <sup id="fnref:eks-vpc-subnet-considerations" role="doc-noteref"><a href="#fn:eks-vpc-subnet-considerations" class="footnote" rel="footnote">6</a></sup>，因此，在很大機率下，這通常涉及相關 Subnet 路由表設定的錯誤：</p>
+
+<ul>
+  <li>A public subnet is a subnet with a route table that includes a route to an internet gateway, whereas a private subnet is a subnet with a route table that doesn’t include a route to an internet gateway.</li>
+</ul>
+
+<p>例如：以下是一個在環境中 Node Groups 運行一段時間後因為 Subnet 設置問題導致節點組處於 <code>DEGRADED</code> 狀態，並存在錯誤訊息。</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-degraded.png" alt="" /></p>
+
+<h2 id="解決方法和相關步驟">解決方法和相關步驟</h2>
+
+<h3 id="public-subnet-公有子網">Public Subnet (公有子網)</h3>
+
+<p>為了解決這個問題，若你在部署 Managed Node Groups 選擇的是 Public Subnet，需要確保 Subnet 啟用了 Auto-assign Public IP address 功能，<a href="https://docs.aws.amazon.com/vpc/latest/userguide/modify-subnets.html#subnet-public-ip">參考以下步驟</a>：</p>
+
+<ol>
+  <li>登錄 AWS Console，並進入 <a href="https://console.aws.amazon.com/vpc/">VPC 管理頁面</a>。</li>
+  <li>選擇您要使用的 Subnet &gt; Edit Subnet Settings，然後選擇「Enable auto-assign public IPv4 address」。</li>
+  <li>勾選後點擊保存</li>
+</ol>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/enable-auto-assign-up-settings.png" alt="" /></p>
+
+<p>完成這些步驟後，如果節點狀態為失敗，可以將失敗的 Managed Node Groups 刪除後再次重新建立一個新的 Managed Node Group，並且選擇上述的 Subnet。在由 EKS 啟動這些 EC2 instances 時，就能根據 Subnet 的設定正確獲取到 Public IP 位址。</p>
+
+<p>如果您遇到的問題不是由於 subnet 沒有啟用 auto-assign public IP address 所導致的，請參考錯誤信息 <sup id="fnref:eks-issues:1" role="doc-noteref"><a href="#fn:eks-issues" class="footnote" rel="footnote">3</a></sup>。</p>
+
+<h3 id="private-subnet-私有子網">Private Subnet (私有子網)</h3>
+
+<p>在前面的內容中描述了一個在預期的私有子網遇到這個錯誤，這通常很可能是因為 EKS 嘗試啟動或是檢查 Managed Node Groups 所使用的 Subnet 時，因為路由指向 Internet Gateway 而認為這個 Subnet 屬於 Public Subnet，而不是預期的 Private Subnet 屬性，最終獲得這樣的例外訊息：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/incorrect-private-subnet-route.png" alt="" /></p>
+
+<p>要解決這個問題，可以透過正確的設定 Private Subnet 對應的 Route Table (路由表) 並且保留 VPC 內部的請求，同時設定正確的非 VPC 請求路由 (例如：針對 <code>0.0.0.0/0</code> 路由移除 Internet Gateway)，指向其他目標像是 <a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html">NAT Gateway</a> 同樣提供僅內部向外部訪問網際網路的能力，以確保工作節點在啟動時仍可以從其他來源下載 Image (例如：Docker Hub)、跟 EKS API Server 互動等。</p>
+
+<h2 id="總結">總結</h2>
+
+<p>在這篇內容中，我們提到了當建立或升級 EKS Managed Node Group 時遇到 <code>Ec2SubnetInvalidConfiguration</code> 錯誤的常見情境和發生原因。在 Public Subnet 情況下，需要確保 Subnet 啟用了 Auto-assign Public IP address 功能；在 Private Subnet 情況下，需要透過正確的設定 Private Subnet 對應的 Route Table 並且保留 VPC 內部的請求，同時設定正確的非 VPC 請求路由，指向其他目標，像是 NAT Gateway。</p>
+
+<p>透過遵循上述的解決方法和相關步驟，希望能幫助在閱讀這篇內容的你更有方向的排查並且解決這個錯誤，確保 Managed Node Group 正常運行。</p>
+
+<h2 id="參考資源">參考資源</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:eks-managed-nodegroup" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/blogs/containers/eks-managed-node-groups/">Extending the EKS API: Managed Node Groups</a> <a href="#fnref:eks-managed-nodegroup" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-nodegroup-update-behavior" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/managed-node-update-behavior.html#managed-node-update-scale-up">Managed node update behavior - Scale up phase</a> <a href="#fnref:eks-managed-nodegroup-update-behavior" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-issues" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/APIReference/API_Issue.html">Amazon EKS resource Issue</a> <a href="#fnref:eks-issues" class="reversefootnote" role="doc-backlink">&#8617;</a> <a href="#fnref:eks-issues:1" class="reversefootnote" role="doc-backlink">&#8617;<sup>2</sup></a></p>
+    </li>
+    <li id="fn:subnet-diagram" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/vpc/latest/userguide/configure-subnets.html#subnet-diagram">Subnets for your VPC - Subnet diagram</a> <a href="#fnref:subnet-diagram" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-feature-request-607" role="doc-endnote">
+      <p><a href="https://github.com/aws/containers-roadmap/issues/607">[EKS] [request]: Remove requirement of public IPs on EKS managed worker nodes #607</a> <a href="#fnref:eks-feature-request-607" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-vpc-subnet-considerations" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/network_reqs.html#network-requirements-subnets">Amazon EKS VPC and subnet requirements and considerations - Subnet requirements and considerations</a> <a href="#fnref:eks-vpc-subnet-considerations" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2023-06-03">03 Jun 2023</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/tw/nsa-kubernetes-hardening-guide/">&laquo; 解析美國國安局 (NSA) 和 CISA 釋出的 Kubernetes 強化指南</a>
+                </div>
+              
+              
+                <div class="col-md-6 text-right pr-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/tw/troubleshooting-eks-PodEvictionFailure-error/">EKS Managed Node Group: 解決 PodEvictionFailure 錯誤 &raquo;</a>
+                </div>
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#如何確認該問題">如何確認該問題</a></li>
+<li class="toc-entry toc-h2"><a href="#常見情境和發生原因">常見情境和發生原因</a></li>
+<li class="toc-entry toc-h2"><a href="#解決方法和相關步驟">解決方法和相關步驟</a></li>
+<li class="toc-entry toc-h2"><a href="#總結">總結</a></li>
+<li class="toc-entry toc-h2"><a href="#參考資源">參考資源</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+<!-- Begin Newsletter Signup Form (TW) -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>訂閱並取得更新</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="免費訂閱" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('請求已送出！').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('你已經加入至訂閱清單！').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('訂閱失敗，請檢查是否符合格式並重試。').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('訂閱失敗，請檢查是否符合格式並重試。').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/tw/" alt="回首頁">回首頁</a>
+    </li>
+    
+    <li>
+      <a href="/tw/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

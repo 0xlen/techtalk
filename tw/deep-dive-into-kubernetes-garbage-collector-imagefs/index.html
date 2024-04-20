@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>深入研究 Kubernetes Garbage Collection：容器映像清除機制 | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/tw/deep-dive-into-kubernetes-garbage-collector-imagefs/" /-->
+
+<meta http-equiv="Content-Language" content="tw">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>深入研究 Kubernetes Garbage Collection：容器映像清除機制 | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="深入研究 Kubernetes Garbage Collection：容器映像清除機制" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="kubelet 如何觸發垃圾收集機制 (Garbage Collection)？在本文中，我們將深入探討 Kubernetes Garbage Collection，並且理解 kubelet 如何實現映像清除機制。此外，我們也將探討如何正確地監控 imageFS 的使用情況。" />
+<meta property="og:description" content="kubelet 如何觸發垃圾收集機制 (Garbage Collection)？在本文中，我們將深入探討 Kubernetes Garbage Collection，並且理解 kubelet 如何實現映像清除機制。此外，我們也將探討如何正確地監控 imageFS 的使用情況。" />
+<link rel="canonical" href="https://easontechtalk.com/tw/deep-dive-into-kubernetes-garbage-collector-imagefs/" />
+<meta property="og:url" content="https://easontechtalk.com/tw/deep-dive-into-kubernetes-garbage-collector-imagefs/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2024-03-11T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" />
+<meta property="twitter:title" content="深入研究 Kubernetes Garbage Collection：容器映像清除機制" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2024-03-11T00:00:00+00:00","datePublished":"2024-03-11T00:00:00+00:00","description":"kubelet 如何觸發垃圾收集機制 (Garbage Collection)？在本文中，我們將深入探討 Kubernetes Garbage Collection，並且理解 kubelet 如何實現映像清除機制。此外，我們也將探討如何正確地監控 imageFS 的使用情況。","headline":"深入研究 Kubernetes Garbage Collection：容器映像清除機制","image":"https://easontechtalk.com/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/tw/deep-dive-into-kubernetes-garbage-collector-imagefs/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/tw/deep-dive-into-kubernetes-garbage-collector-imagefs/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/tw/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/tw/" alt="首頁">首頁</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/tw/about/" alt="關於">關於</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/?" alt="English">English</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" alt="深入研究 Kubernetes Garbage Collection：容器映像清除機制">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/tw/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">深入研究 Kubernetes Garbage Collection：容器映像清除機制</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>kubelet 如何觸發垃圾收集機制 (Garbage Collection)？在本文中，我們將深入探討 Kubernetes Garbage Collection，並且理解 kubelet 如何實現映像清除機制。此外，我們也將探討如何正確地監控 imageFS 的使用情況。</p>
+
+<p>當 kubelet 檢測到 imageFs（存儲容器映像的檔案系統）的可用空間低於預定閾值時，它會觸發 Garbage Collection，即開始清理不再需要的容器映像以釋放空間。這一閾值可以通過 kubelet 的配置選項 <code>--image-gc-high-threshold</code> (<code>imageGCHighThresholdPercent</code>) 設定，預設值為 85%，這意味著當 imageFs 的可用空間低於總空間的 85% 時，kubelet 將開始進行映像清理工作，並且可能在日誌中注意到類似以下的提示：</p>
+
+<pre><code class="language-bash">kubelet[2298]: I0226 11:59:17.153440    2298 image_gc_manager.go:310] "Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold" usage=93 highThreshold=85 amountToFree=69382155468 lowThreshold=80
+
+kubelet[2298]: I0226 12:04:17.157231    2298 image_gc_manager.go:310] "Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold" usage=97 highThreshold=85 amountToFree=88325110988 lowThreshold=80
+</code></pre>
+
+<h2 id="kubelet-如何計算容器映像空間並且觸發-garbage-collection">kubelet 如何計算容器映像空間並且觸發 Garbage Collection</h2>
+
+<p>要了解 kubelet 其中對於容器映像管理的 Garbage Collection 的機制，就得先分析 kubelet 實際是如何分析磁碟空間，並且根據對應設定參數設定觸發清除工作。</p>
+
+<p>以 Kubernetes 1.29 核心程式碼為例 <sup id="fnref:k8s-1-29-image-gc-manager" role="doc-noteref"><a href="#fn:k8s-1-29-image-gc-manager" class="footnote" rel="footnote">1</a></sup>。在該片段中，定義了 <code>usagePercent</code> 計算方法，並且提供了一個判斷式檢查是否超過 <code>im.policy.HighThresholdPercent</code> 的數值。從這個片段中，可以推敲這裡的邏輯與上述的參數設定觸發映像清理行為相關：</p>
+
+<pre><code class="language-go">  // Get disk usage on disk holding images.
+  fsStats, _, err := im.statsProvider.ImageFsStats(ctx)
+  if err != nil {
+    return err
+  }
+
+	var capacity, available int64
+	if fsStats.CapacityBytes != nil {
+		capacity = int64(*fsStats.CapacityBytes)
+	}
+	if fsStats.AvailableBytes != nil {
+		available = int64(*fsStats.AvailableBytes)
+	}
+
+  ...
+
+  // If over the max threshold, free enough to place us at the lower threshold.
+  usagePercent := 100 - int(available*100/capacity)
+  if usagePercent &gt;= im.policy.HighThresholdPercent {
+    amountToFree := capacity*int64(100-im.policy.LowThresholdPercent)/100 - available
+    klog.InfoS("Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold", "usage", usagePercent, "highThreshold", im.policy.HighThresholdPercent, "amountToFree", amountToFree, "lowThreshold", im.policy.LowThresholdPercent)
+    freed, err := im.freeSpace(ctx, amountToFree, freeTime, images)
+    if err != nil {
+      return err
+    }
+
+    if freed &lt; amountToFree {
+      err := fmt.Errorf("Failed to garbage collect required amount of images. Attempted to free %d bytes, but only found %d bytes eligible to free.", amountToFree, freed)
+      im.recorder.Eventf(im.nodeRef, v1.EventTypeWarning, events.FreeDiskSpaceFailed, err.Error())
+      return err
+    }
+  }
+</code></pre>
+
+<p>值得一提的是，變數 <code>capacity</code> 以及 <code>available</code> 從字面上來看分別代表了總以及剩餘可用空間，實作上實際引用了 <code>statsProvider.ImageFsStats</code> 其中的 <code>CapacityBytes</code> 以及 <code>AvailableBytes</code> 數值。</p>
+
+<p>如果進一步分析核心程式碼，可以發現 <code>statsProvider</code> 可以根據實作上的定義存在獲取映像對應的儲存空間數據有些微不同 (Image Filesystem，以下簡稱 imageFS)。ImageFS 在 kubelet 核心程式碼中存在兩者不同的實作方式，一種為使用 CRI 獲取，另一種則為使用 cadvisor，因此，在核心程式碼目錄中可以注意到存在 <code>cri_stats_provider.go</code> <sup id="fnref:k8s-1-29-cri-stats-provider" role="doc-noteref"><a href="#fn:k8s-1-29-cri-stats-provider" class="footnote" rel="footnote">2</a></sup> 以及 <code>cadvisor_stats_provider.go</code> <sup id="fnref:k8s-1-29-cadvisor-stats-provider" role="doc-noteref"><a href="#fn:k8s-1-29-cadvisor-stats-provider" class="footnote" rel="footnote">3</a></sup> 兩者不同的實作。</p>
+
+<p>這項機制在 Kubernetes 1.23 版本支持了這項 <code>PodAndContainerStatsFromCRI</code> 測試功能 (Feature Gate <sup id="fnref:feature-gate" role="doc-noteref"><a href="#fn:feature-gate" class="footnote" rel="footnote">4</a></sup>)，允許 kubelet 透過 CRI 介面與 Container runtime 互動獲取容器相關的指標和數據，但預設都是關閉 <sup id="fnref:kubelet-metric-data" role="doc-noteref"><a href="#fn:kubelet-metric-data" class="footnote" rel="footnote">5</a></sup>，並且使用 cadvisor 作為主要的收集來源。</p>
+
+<p><img src="/assets/images/2024/deep-dive-into-kubernetes-garbage-collector-imagefs/cover.jpg" alt="" /></p>
+
+<p>但不論使用哪種方式收集，根據 kubelet 提供的對應數據統計，其統計結果皆可以使用 kubelet 本身提供的 API 獲得這項資訊，例如：</p>
+
+<pre><code class="language-bash">$ kubectl get --raw /api/v1/nodes/ip-172-31-21-234.eu-west-1.compute.internal/proxy/stats/summary | jq '.node.runtime.imageFs'
+{
+  "time": "2024-03-11T10:59:56Z",
+  "availableBytes": 17310752768,
+  "capacityBytes": 21462233088,
+  "usedBytes": 1291296768,
+  "inodesFree": 10375082,
+  "inodes": 10484720,
+  "inodesUsed": 44497
+}
+</code></pre>
+
+<p>在使用 containerd 作為容器執行的通用環境下 (例如：Amazon EKS)，其預設將使用 <code>/var/lib/containerd</code> 作為主要的 imageFS 位置：</p>
+
+<pre><code class="language-bash">$ head /etc/containerd/config.toml
+version = 2
+root = "/var/lib/containerd"
+state = "/run/containerd"
+</code></pre>
+
+<p>(如果想瞭解更多有關 imageFS 的位置，Kubernetes Blog 近期有一篇文章在描述不同 Container runtime 對應的 imageFS 磁碟儲存空間耗盡問題，並且建議分離檔案系統位置 <sup id="fnref:k8s-blog-separate-imagefs" role="doc-noteref"><a href="#fn:k8s-blog-separate-imagefs" class="footnote" rel="footnote">6</a></sup>，在此不贅述)</p>
+
+<p>如果是 CRI，可以嘗試使用 CRI 命令列工具了解 Container Runtime 所使用的 imageFS 掛載位置：</p>
+
+<pre><code class="language-bash">$ sudo crictl imagefsinfo
+{
+  "status": {
+    "imageFilesystems": [
+      {
+        "timestamp": "1710154476577999227",
+        "fsId": {
+          "mountpoint": "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs"
+        },
+        "usedBytes": {
+          "value": "1291296768"
+        },
+        "inodesUsed": {
+          "value": "44497"
+        }
+      }
+    ],
+    "containerFilesystems": []
+  }
+}
+</code></pre>
+
+<p>因此，我們可以得知 kubelet 會擷取 imageFS 中的 capacity, available 等數值 (不論是 CRI 或是 cadvisor)，上述設定中也可以得知我環境中 imageFS 對應的儲存位置為 <code>/var/lib/containerd</code> (containerd)。這部分意味著容器映像的空間將可能與系統的掛載位置共用，例如，以下是我的系統空間輸出，可以根據以下資料嘗試計算取得的數值與 <code>df</code> 得到的數值是否匹配：</p>
+
+<pre><code class="language-bash">$ df
+Filesystem     1K-blocks    Used Available Use% Mounted on
+devtmpfs         1962632       0   1962632   0% /dev
+tmpfs            1971680       0   1971680   0% /dev/shm
+tmpfs            1971680    1696   1969984   1% /run
+tmpfs            1971680       0   1971680   0% /sys/fs/cgroup
+/dev/nvme0n1p1  20959212 4054180  16905032  20% /
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6d62590341a08f4066c168f2d00118ac5aade67ceb2797c0d88f97cbe825e302/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6f3f7200edfeb3129b765652da98f14009597d26bfcc7973232984ea431e67a7/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/7c9b3b1b9853dcdccdcc18e99ca89caeac236150df67881dd054651339038efc/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/38935dde2e2d40d73d039befc1283e165284269f7bb11002fd3937c274998fb5/shm
+shm                65536       0     65536   0% /run/containerd/io.containerd.grpc.v1.cri/sandboxes/6fb8c888e2fa36a1ac909909dad4d4f5d520f48eb42731353f176f6e9dd76f03/shm
+tmpfs             394336       0    394336   0% /run/user/1000
+</code></pre>
+
+<ul>
+  <li><code>/var/lib/containerd</code> 並未分離不同的檔案系統因此共享 <code>/</code> 的對應空間</li>
+  <li>根目錄位置的 <code>Available</code> 數值爲 <code>16905032 KiB</code>，該數值與上述 kubelet 獲取的 <code>imageFs.availableBytes</code>的數值相同 (<code>17310752768</code>)。由於 kubelet 獲取的單位是 <code>Byte</code>，轉換為 <code>KiB</code> 後為 <code>17310752768 (imageFs.availableBytes) / 1024 = 16905032 KiB</code> (約 17 G)</li>
+  <li>掛載點 <code>/</code> 的總空間大小為 <code>1K-block</code>數值 (<code>20959212 KiB</code>)，等同於轉換後的 <code>21462233088 (imageFs.capacityBytes) / 1024 = 20959212 KiB</code> 數值 (約 20 G)</li>
+</ul>
+
+<p>在知道 kubelet 是如何獲取 imageFS 可用空間和相關數值後，根據 kubelet 核心程式碼的實作，我們可以知道在上述執行環境中，計算使用空間是否超出 <code>--image-gc-high-threshold</code> 定義的閥值 (預設為 85%) 則可以根據以下結果得知：</p>
+
+<pre><code class="language-bash"># usagePercent := 100 - int(available*100/capacity)
+# 約等於 20%
+usagePercent = 100 - (17310752768 * 100 / 21462233088)
+</code></pre>
+
+<p>由於我的環境中 imageFS 與 <code>/</code> 空間共享，因此該數值與 <code>df</code> 提供的百分比近似而可以作為參考值。</p>
+
+<p>因此，在我的例子中這樣的狀態並不足以觸發  Garbage Collection 並且清除部分的容器映像。更一步則可能根據 Hard Eviction Threshold 的參數 <code>--eviction-hard</code> (驅逐條件) 觸發 Pod 驅逐操作將部分的 Pod 停止並且移除，例如 <code>imagefs.available&lt;15%</code> <sup id="fnref:node-pressure-eviction" role="doc-noteref"><a href="#fn:node-pressure-eviction" class="footnote" rel="footnote">7</a></sup>。</p>
+
+<h3 id="如何監控-imagefs-的用量">如何監控 imageFS 的用量</h3>
+
+<p>在了解 kubelet 的運作機制和計算方法後，我們可以透過實作一個簡單的 Shell Script 來獲取每個節點的 imageFS 儲存空間和使用率概況，例如：</p>
+
+<pre><code class="language-bash">nodes=$(kubectl get no -o=jsonpath='{.items[*].metadata.name}')
+
+for node in $nodes; do
+    imageFS=$(kubectl get --raw "/api/v1/nodes/$node/proxy/stats/summary"  | jq .node.runtime.imageFs)
+    available=$(echo $imageFS | jq '.availableBytes')
+    capacity=$(echo $imageFS | jq '.capacityBytes')
+
+    usagePercent=$((100 - $available * 100 / $capacity))
+
+    echo "Node: $node, Available: $(($available / 1024 / 1024)) MiB, Capacity: $(($capacity / 1024 / 1024)) MiB, Usage: $usagePercent%"
+done
+</code></pre>
+
+<p>然而，在 imageFS 與主要掛載位置共用的通用情況下，要監控使用空間是否緊張而進一步觸發 Garbage Collection，除了上述簡單的實作，也可以透過常見的監控完成，例如上述的 <code>df</code> 所見的使用量百分比數據即可作為一項參考，亦或者是監控系統中有引入常見的 Prometheus Node Exporter 的提供了檔案系統相關的功能 (例如可以定義 <code>--collector.filesystem.mount-points-exclude</code> 決定哪些掛載點要排除監控) 能夠具體將檔案系統的數據進一步轉數值化，以進行近一步的監控。</p>
+
+<h2 id="總結">總結</h2>
+
+<p>本文深入探討了 Kubernetes 的垃圾收集機制 (Garbage Collection) 以及如何監控 imageFS 的使用情況。在了解 Kubernetes 的 Garbage Collection 以及如何監控 imageFS 的使用情況後，可以對於 Kubernetes 環境的監控和資源使用有更全面的認識。妥善的資源管理能確保系統的穩定與效能，避免因為資源耗盡而導致的非預期服務中斷。</p>
+
+<h2 id="參考資料">參考資料</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:k8s-1-29-image-gc-manager" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/v1.29.0/pkg/kubelet/images/image_gc_manager.go#L319-L360">Kubernetes v1.29.0 - image_gc_manager.go</a> <a href="#fnref:k8s-1-29-image-gc-manager" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-1-29-cri-stats-provider" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/v1.29.0/pkg/kubelet/stats/cri_stats_provider.go#L387-L425">Kubernetes v1.29.0 - cri_stats_provider.go</a> <a href="#fnref:k8s-1-29-cri-stats-provider" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-1-29-cadvisor-stats-provider" role="doc-endnote">
+      <p><a href="https://github.com/kubernetes/kubernetes/blob/3f7a50f38688eb332e2a1b013678c6435d539ae6/pkg/kubelet/stats/cadvisor_stats_provider.go#L241-L322">Kubernetes v1.29.0 - cadvisor_stats_provider.go</a> <a href="#fnref:k8s-1-29-cadvisor-stats-provider" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:feature-gate" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/reference/command-line-tools-reference/feature-gates/#feature-gates-for-alpha-or-beta-features">Kubernetes Feature Gates</a> <a href="#fnref:feature-gate" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubelet-metric-data" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/reference/instrumentation/node-metrics/#:~:text=The%20kubelet%20gathers%20metric%20statistics,via%20the%20Kubernetes%20API%20server">Kubelet Node Metric</a> <a href="#fnref:kubelet-metric-data" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-blog-separate-imagefs" role="doc-endnote">
+      <p><a href="https://kubernetes.io/blog/2024/01/23/kubernetes-separate-image-filesystem/">Image Filesystem: Configuring Kubernetes to store containers on a separate filesystem</a> <a href="#fnref:k8s-blog-separate-imagefs" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:node-pressure-eviction" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/#hard-eviction-thresholds">Node-pressure Eviction Hard eviction thresholds</a> <a href="#fnref:node-pressure-eviction" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2024-03-11">11 Mar 2024</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/tw/recover-permission-using-eks-cluster-access-entry/">&laquo; 使用 EKS Access Entry 拯救並恢復叢集的存取權限</a>
+                </div>
+              
+              
+                <div class="col-md-6 text-right pr-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/tw/how-kubecost-get-all-aws-disks/">深入探討 kubecost 是如何取得整個 AWS 帳號的未使用磁碟資訊 &raquo;</a>
+                </div>
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#kubelet-如何計算容器映像空間並且觸發-garbage-collection">kubelet 如何計算容器映像空間並且觸發 Garbage Collection</a></li>
+<li class="toc-entry toc-h2"><a href="#總結">總結</a></li>
+<li class="toc-entry toc-h2"><a href="#參考資料">參考資料</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+<!-- Begin Newsletter Signup Form (TW) -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>訂閱並取得更新</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="免費訂閱" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('請求已送出！').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('你已經加入至訂閱清單！').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('訂閱失敗，請檢查是否符合格式並重試。').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('訂閱失敗，請檢查是否符合格式並重試。').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/tw/" alt="回首頁">回首頁</a>
+    </li>
+    
+    <li>
+      <a href="/tw/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>Amazon ECS Finally Support Task Definition Deletion | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/ecs-support-task-definition-deletion/" /-->
+
+<meta http-equiv="Content-Language" content="en">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Amazon ECS Finally Support Task Definition Deletion | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="Amazon ECS Finally Support Task Definition Deletion" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="Dating back to 2015, Amazon ECS was officially GA and start to support run container workload on AWS.1; However, it only had the DeregisterTaskDefinition2 API to deregister the specific task definition revision. Amazon ECS history &#8617; Amazon ECS API - DeregisterTaskDefinition &#8617;" />
+<meta property="og:description" content="Dating back to 2015, Amazon ECS was officially GA and start to support run container workload on AWS.1; However, it only had the DeregisterTaskDefinition2 API to deregister the specific task definition revision. Amazon ECS history &#8617; Amazon ECS API - DeregisterTaskDefinition &#8617;" />
+<link rel="canonical" href="https://easontechtalk.com/ecs-support-task-definition-deletion/" />
+<meta property="og:url" content="https://easontechtalk.com/ecs-support-task-definition-deletion/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2023/ecs-support-task-definition-deletion/cover.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-03-10T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2023/ecs-support-task-definition-deletion/cover.png" />
+<meta property="twitter:title" content="Amazon ECS Finally Support Task Definition Deletion" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2023-03-10T00:00:00+00:00","datePublished":"2023-03-10T00:00:00+00:00","description":"Dating back to 2015, Amazon ECS was officially GA and start to support run container workload on AWS.1; However, it only had the DeregisterTaskDefinition2 API to deregister the specific task definition revision. Amazon ECS history &#8617; Amazon ECS API - DeregisterTaskDefinition &#8617;","headline":"Amazon ECS Finally Support Task Definition Deletion","image":"https://easontechtalk.com/assets/images/2023/ecs-support-task-definition-deletion/cover.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/ecs-support-task-definition-deletion/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/ecs-support-task-definition-deletion/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/" alt="Home">Home</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/about/" alt="About">About</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/tw/" alt="中文 Chinese">中文 Chinese</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2023/ecs-support-task-definition-deletion/cover.png" alt="Amazon ECS Finally Support Task Definition Deletion">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/categories#amazon-elastic-container-service-ecs">Amazon Elastic Container Service (ECS)</a>
+                        </li>
+                        
+                        <li>
+                         <a href="/categories#container">Container</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">Amazon ECS Finally Support Task Definition Deletion</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>Dating back to 2015, Amazon ECS was officially GA and start to support run container workload on AWS.<sup id="fnref:ecs-ga" role="doc-noteref"><a href="#fn:ecs-ga" class="footnote" rel="footnote">1</a></sup>; However, it only had the <code>DeregisterTaskDefinition</code><sup id="fnref:DeregisterTaskDefinition-API" role="doc-noteref"><a href="#fn:DeregisterTaskDefinition-API" class="footnote" rel="footnote">2</a></sup> API to deregister the specific task definition revision.</p>
+
+<p>While working with ECS, you might have come across situations where you need to delete an outdated or unused task definition. Until recently, ECS still did not support deleting task definitions, leaving many users interested to know when is task definition deletion supported.</p>
+
+<p>Fortunately, AWS has now added support for task definition deletion, making it easier for users to manage their ECS environments.<sup id="fnref:ecs-fr-685" role="doc-noteref"><a href="#fn:ecs-fr-685" class="footnote" rel="footnote">3</a></sup></p>
+
+<h2 id="whats-the-change">What’s the change?</h2>
+
+<p>On February 27, 2023, Amazon ECS announced now it supports deletion of inactive task definition revisions.<sup id="fnref:whats-new-ecs-task-definition-deletion" role="doc-noteref"><a href="#fn:whats-new-ecs-task-definition-deletion" class="footnote" rel="footnote">4</a></sup></p>
+
+<p>When a user creates a task definition, a new revision is automatically created for it(e.g. <code>myTaskDefinition:1</code>, <code>myTaskDefinition:2</code> … etc). Each revision is immutable, which means that it cannot be deleted or modified once it is created. This was the main reason why task definition deletion was not supported earlier. Even if a user deleted all the tasks that used a specific task definition revision, the revision would still be present, taking up storage space and cluttering the ECS console.</p>
+
+<p>Before this change, users could only mark the task definition revision as <code>INACTIVE</code> but cannot delete. Previously, <code>INACTIVE</code> task definition revisions remained discoverable in user’s account indefinitely.</p>
+
+<p>Now this change enables customers to delete inactive task definition revisions programmatically or via the Amazon ECS console. With this new capability, customers can now programmatically delete inactive task definition revisions or delete them via the Amazon ECS console. This change simplifies resource management and improves security posture by enabling customers to permanently delete task definition revisions that are no longer needed or contain undesirable configurations</p>
+
+<p><img src="/assets/images/2023/ecs-support-task-definition-deletion/ecs-console-deletion-option.png" alt="Task definition deletion option" /></p>
+
+<h2 id="why-having-task-definition-deletion-is-so-important">Why having task definition deletion is so important?</h2>
+
+<p>When you store your credential pass it to your container through the environment variables, you may expose the unwanted security concern if you realize that the task definition will not be deleted. Here is an example of how this could happen:</p>
+
+<pre><code class="language-json">{
+    "family": "",
+    "containerDefinitions": [
+        {
+            "name": "",
+            "image": "mysql",
+            ...
+            "environment": [
+                {
+                    "name": "MYSQL_ROOT_PASSWORD",
+                    "value": "mySecretPassword"
+                }
+            ],
+            ...
+        }
+    ],
+    ...
+}
+</code></pre>
+
+<p>In the past, the task definition could only be set as <code>INACTIVE</code> status and could not be removed. If an IAM user or IAM role had permission to describe the task definition, they could see the credential data that you might not expect them to have access to.</p>
+
+<pre><code class="language-bash">$ aws ecs describe-task-definition --task-definition myTaskDefinition:2
+
+{
+    "taskDefinition": {
+        "containerDefinitions": [
+            {
+                "name": "web-service",
+                "environment": [
+                    {
+                        "name": "MYSQL_ROOT_PASSWORD",
+                        "value": "mySecretPassword"
+                    }
+                ],
+                ...
+            }
+        ],
+        "family": "myTaskDefinition",
+        "revision": 2,
+        "status": "INACTIVE",
+        ...
+}
+</code></pre>
+
+<p>As task definition can leak sensitive detail even when they are in <code>INACTIVE</code> status, it is recommended to use AWS Secrets Manager or AWS Systems Manager Parameter Store, both of which support injection as environment variables in the container.</p>
+
+<p>Regardless of whether you store the credential in AWS Secrets Manager or AWS Systems Manager Parameter Store, you now have the option to permanently delete the task definition on the AWS Console, using programmable DeleteTaskDefinitions<sup id="fnref:DeleteTaskDefinitions-API" role="doc-noteref"><a href="#fn:DeleteTaskDefinitions-API" class="footnote" rel="footnote">5</a></sup> API or AWS CLI command:</p>
+
+<pre><code>$ aws ecs delete-task-definitions --task-definitions &lt;task name:revision&gt;
+</code></pre>
+
+<h2 id="conclusion">Conclusion</h2>
+
+<p>After 8 years, Amazon ECS finally has the support for task definition deletion. Task definition deletion in Amazon ECS helps reduce clutter in your ECS console, automate the task definition deletion process, and keep your environment clean.</p>
+
+<p>What an exciting feature launch!</p>
+
+<h2 id="references">References</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:ecs-ga" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/developerguide/document_history.html">Amazon ECS history</a> <a href="#fnref:ecs-ga" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:DeregisterTaskDefinition-API" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DeregisterTaskDefinition.html">Amazon ECS API - DeregisterTaskDefinition</a> <a href="#fnref:DeregisterTaskDefinition-API" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:ecs-fr-685" role="doc-endnote">
+      <p><a href="https://github.com/aws/containers-roadmap/issues/685">[ECS] [request]: Delete task definitions #685</a> <a href="#fnref:ecs-fr-685" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:whats-new-ecs-task-definition-deletion" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/about-aws/whats-new/2023/02/amazon-ecs-deletion-inactive-task-definition-revisions/">Amazon ECS now supports deletion of inactive task definition revisions</a> <a href="#fnref:whats-new-ecs-task-definition-deletion" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:DeleteTaskDefinitions-API" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DeleteTaskDefinitions.html">Amazon ECS API - DeleteTaskDefinitions</a> <a href="#fnref:DeleteTaskDefinitions-API" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2023-03-10">10 Mar 2023</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/launch-ecs-task-with-bottlerocket/">&laquo; Launch task with Amazon ECS and Bottlerocket</a>
+                </div>
+              
+              
+                <div class="col-md-6 text-right pr-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/nsa-kubernetes-hardening-guide/">Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA &raquo;</a>
+                </div>
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#whats-the-change">What’s the change?</a></li>
+<li class="toc-entry toc-h2"><a href="#why-having-task-definition-deletion-is-so-important">Why having task definition deletion is so important?</a></li>
+<li class="toc-entry toc-h2"><a href="#conclusion">Conclusion</a></li>
+<li class="toc-entry toc-h2"><a href="#references">References</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+
+<!-- Begin Default Newsletter Signup Form -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>Sign up to get the update</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail Address" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('Request has been sent!').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('You are in the mailing list!').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/" alt="Home">Home</a>
+    </li>
+    
+    <li>
+      <a href="/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

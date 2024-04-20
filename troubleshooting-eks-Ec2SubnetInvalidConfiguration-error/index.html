@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/" /-->
+
+<meta http-equiv="Content-Language" content="en">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="Amazon Elastic Kubernetes Service (EKS) is a managed Kubernetes service that allows many Kubernetes administrators to quickly create and easily run Kubernetes clusters on AWS in a matter of minutes via commands, simplifying many operations. In 2019, EKS released new API support for Managed Node Groups 1, which can automatically create and manage EC2 instances and add them to Kubernetes clusters, making it easier for users to add and expand computational nodes required by Kubernetes clusters, and even upgrade node versions via API or one-click integration. Extending the EKS API: Managed Node Groups &#8617;" />
+<meta property="og:description" content="Amazon Elastic Kubernetes Service (EKS) is a managed Kubernetes service that allows many Kubernetes administrators to quickly create and easily run Kubernetes clusters on AWS in a matter of minutes via commands, simplifying many operations. In 2019, EKS released new API support for Managed Node Groups 1, which can automatically create and manage EC2 instances and add them to Kubernetes clusters, making it easier for users to add and expand computational nodes required by Kubernetes clusters, and even upgrade node versions via API or one-click integration. Extending the EKS API: Managed Node Groups &#8617;" />
+<link rel="canonical" href="https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/" />
+<meta property="og:url" content="https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-06-03T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png" />
+<meta property="twitter:title" content="Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2023-06-03T00:00:00+00:00","datePublished":"2023-06-03T00:00:00+00:00","description":"Amazon Elastic Kubernetes Service (EKS) is a managed Kubernetes service that allows many Kubernetes administrators to quickly create and easily run Kubernetes clusters on AWS in a matter of minutes via commands, simplifying many operations. In 2019, EKS released new API support for Managed Node Groups 1, which can automatically create and manage EC2 instances and add them to Kubernetes clusters, making it easier for users to add and expand computational nodes required by Kubernetes clusters, and even upgrade node versions via API or one-click integration. Extending the EKS API: Managed Node Groups &#8617;","headline":"Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error","image":"https://easontechtalk.com/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/" alt="Home">Home</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/about/" alt="About">About</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/tw/" alt="中文 Chinese">中文 Chinese</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/cover.png" alt="Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/categories#amazon-elastic-kubernetes-service-eks">Amazon Elastic Kubernetes Service (EKS)</a>
+                        </li>
+                        
+                        <li>
+                         <a href="/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>Amazon Elastic Kubernetes Service (EKS) is a managed Kubernetes service that allows many Kubernetes administrators to quickly create and easily run Kubernetes clusters on AWS in a matter of minutes via commands, simplifying many operations. In 2019, EKS released new API support for Managed Node Groups <sup id="fnref:eks-managed-nodegroup" role="doc-noteref"><a href="#fn:eks-managed-nodegroup" class="footnote" rel="footnote">1</a></sup>, which can automatically create and manage EC2 instances and add them to Kubernetes clusters, making it easier for users to add and expand computational nodes required by Kubernetes clusters, and even upgrade node versions via API or one-click integration.</p>
+
+<p>However, during the process of adding or upgrading Managed Node Groups, it is possible to encounter the <code>Ec2SubnetInvalidConfiguration</code> error. Therefore, this article will further analyze the cause, common scenarios, and solutions of this error.</p>
+
+<h2 id="how-to-identify-this-issue">How to identify this issue?</h2>
+
+<p>To check whether there is an <code>Ec2SubnetInvalidConfiguration</code> error in EKS Managed Node Groups, you can confirm whether there are any health issues through the EKS Console or AWS CLI commands. For example, by clicking on the “Compute” tab under <code>Cluster</code> &gt; <code>Node groups</code> to enter the detailed page of the node group, you can check whether there is any error message in the <code>Health Issues</code> tab:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-create-failed.png" alt="Nodegroup create failed" /></p>
+
+<p>According to the EKS Managed Node Group upgrade process <sup id="fnref:eks-managed-nodegroup-update-behavior" role="doc-noteref"><a href="#fn:eks-managed-nodegroup-update-behavior" class="footnote" rel="footnote">2</a></sup>, if node upgrades or new nodes are stuck after 15-20 minutes, there may be some problems with the work nodes during operation, and there is an opportunity to further troubleshoot possible causes through this information after a period of time. The example below shows the use of AWS CLI commands:</p>
+
+<pre><code>$ aws eks describe-nodegroup --nodegroup-name broken-nodegroup --cluster eks --region eu-west-1
+{
+    "nodegroup": {
+        "nodegroupName": "broken-nodegroup",
+        "clusterName": "eks",
+        "version": "1.25",
+        "releaseVersion": "1.25.9-20230526",
+        "status": "CREATE_FAILED",
+        "capacityType": "ON_DEMAND",
+        "subnets": [
+            "subnet-AAAAAAAAAAAAAAAAA",
+            "subnet-BBBBBBBBBBBBBBBBB"
+        ],
+        "amiType": "AL2_x86_64",
+        "health": {
+            "issues": [
+                {
+                    "code": "Ec2SubnetInvalidConfiguration",
+                    "message": "One or more Amazon EC2 Subnets of [subnet-AAAAAAAAAAAAAAAAA, subnet-BBBBBBBBBBBBBBBBB] for node group broken-nodegroup does not automatically assign public IP addresses to instances launched into it. If you want your instances to be assigned a public IP address, then you need to enable auto-assign public IP address for the subnet. See IP addressing in VPC guide: &lt;https://docs.aws.amazon.com/vpc/latest/userguide/vpc-ip-addressing.html#subnet-public-ip&gt;",
+                    "resourceIds": [
+                        "subnet-AAAAAAAAAAAAAAAAA",
+                        "subnet-BBBBBBBBBBBBBBBBB"
+                    ]
+                }
+            ]
+        },
+        "updateConfig": {
+            "maxUnavailable": 1
+        },
+        ...
+    }
+}
+
+</code></pre>
+
+<p>The above example shows that when creating a node group, it failed and is in a <code>CREATE_FAILED</code> state.</p>
+
+<h2 id="common-scenarios-and-causes">Common scenarios and causes</h2>
+
+<p>According to the definition of error exceptions <sup id="fnref:eks-issues" role="doc-noteref"><a href="#fn:eks-issues" class="footnote" rel="footnote">3</a></sup>, it is easy to know that this error is usually caused by the subnet specified by EKS Managed Node Group not enabling auto-assign public IP address.</p>
+
+<p>By default, when Managed Node Groups create EC2 instances, they need to rely on the subnet itself to enable this function. If the subnet does not enable auto-assign public IP address, EC2 instances will not be able to obtain public IPv4 addresses and will be unable to communicate with the Internet, leading to this error. Therefore, this gives rise to two different usage scenarios: Public Subnet and Private Subnet.</p>
+
+<p>Public Subnet and Private Subnet refer to different subnets set in Amazon Virtual Private Cloud (VPC). Public Subnet means that resources in this subnet can communicate directly with the Internet and connect to the public Internet, while Private Subnet cannot communicate with the Internet directly:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/subnet-diagram.png" alt="Subnet diagram" /></p>
+
+<p>(Image Source: Amazon Virtual Private Cloud User Guide <sup id="fnref:subnet-diagram" role="doc-noteref"><a href="#fn:subnet-diagram" class="footnote" rel="footnote">4</a></sup>)</p>
+
+<p>In short, if a subnet has a route pointing to an Internet Gateway resource (<code>0.0.0.0/0</code>), it can usually be considered that this subnet will be able to directly connect to the Internet. Otherwise, this subnet is expected to exist in a limited and private network environment.</p>
+
+<h3 id="encountering-this-error-in-public-subnet">Encountering this error in Public Subnet</h3>
+
+<p>Previously, EKS would enable auto-assign public IPv4 addresses for all Node Groups under Managed Node Groups when creating them, regardless of whether they were in a Public Subnet or Private Subnet. However, this feature was updated in 2020 <sup id="fnref:eks-feature-request-607" role="doc-noteref"><a href="#fn:eks-feature-request-607" class="footnote" rel="footnote">5</a></sup>. Therefore, if you expect the EKS Managed Node Groups you deploy to be assigned public IPv4 addresses and allow direct connection to the Internet, you need to ensure that the Subnet you use to create or upgrade Managed Node Groups with Public Subnet enables auto-assign public IPv4 addresses (<code>MapPublicIpOnLaunch</code>):</p>
+
+<pre><code>$ aws ec2 describe-subnets --subnet-ids subnet-XXXXXXXXX
+"Subnets": [
+        {
+            "CidrBlock": "192.168.64.0/19",
+            "MapPublicIpOnLaunch": true,
+            "State": "available",
+            "SubnetId": "subnet-XXXXXXXXXXX",
+            "VpcId": "vpc-XXXXXXXXXXX",
+            ...
+        }
+    ]
+
+</code></pre>
+
+<h3 id="encountering-this-error-in-private-subnet">Encountering this error in Private Subnet</h3>
+
+<p>You may say, “I originally expected this subnet to be a Private Subnet, and maybe it was normal when I first created it.” You may wonder why EKS Managed Groups may report that the subnet specified by my Node Groups does not automatically associate public IPv4 addresses during runtime or upgrade.</p>
+
+<p>For Amazon EKS, the VPC associated subnet properties still apply to the principles mentioned earlier <sup id="fnref:eks-vpc-subnet-considerations" role="doc-noteref"><a href="#fn:eks-vpc-subnet-considerations" class="footnote" rel="footnote">6</a></sup>, so in many cases, this usually involves routing table settings related to the Subnet:</p>
+
+<ul>
+  <li>A public subnet is a subnet with a route table that includes a route to an Internet gateway, whereas a private subnet is a subnet with a route table that doesn’t include a route to an Internet gateway.</li>
+</ul>
+
+<p>For example, the following is an example of a node group in the environment that is in a <code>DEGRADED</code> state due to subnet configuration issues after running Node Groups for a period of time, and there is an error message:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/nodegroup-degraded.png" alt="Nodegroup degraded" /></p>
+
+<h2 id="solutions-and-steps">Solutions and Steps</h2>
+
+<h3 id="public-subnet">Public Subnet</h3>
+
+<p>To solve this problem, if you choose Public Subnet to deploy Managed Node Groups, you need to ensure that the Subnet enables the Auto-assign Public IP address function. <a href="https://docs.aws.amazon.com/vpc/latest/userguide/modify-subnets.html#subnet-public-ip">Refer to the following steps</a>:</p>
+
+<ol>
+  <li>Log in to the AWS Console and go to the <a href="https://console.aws.amazon.com/vpc/">VPC Management Console</a>.</li>
+  <li>Choose the Subnet you want to use &gt; Edit Subnet Settings, and select “Enable auto-assign public IPv4 address”.</li>
+  <li>Check the option and click Save.</li>
+</ol>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/enable-auto-assign-up-settings.png" alt="Enable auto assign settings" /></p>
+
+<p>After completing these steps, if the node status fails, you can delete the failed Managed Node Groups and create a new one again, selecting the above Subnet. When EKS starts these EC2 instances, they can obtain Public IP addresses correctly based on the Subnet settings.</p>
+
+<p>If the problem you encounter is not caused by the subnet not enabling auto-assign public IP address, please refer to the error information. <sup id="fnref:eks-issues:1" role="doc-noteref"><a href="#fn:eks-issues" class="footnote" rel="footnote">3</a></sup></p>
+
+<h3 id="private-subnet">Private Subnet</h3>
+
+<p>In the previous content, we described an error that can occur when encountering an expected private subnet. This is usually because EKS tries to start or check the subnet used by Managed Node Groups and assumes that the subnet belongs to the Public Subnet property due to the route pointing to the Internet Gateway, rather than the expected Private Subnet property, resulting in the following exception message:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/incorrect-private-subnet-route.png" alt="Incorrect private subnet route" /></p>
+
+<p>To resolve this issue, you can configure the Route Table corresponding to the Private Subnet correctly, preserve internal requests within the VPC, and set the correct non-VPC request routing (such as removing the Internet Gateway for the <code>0.0.0.0/0</code> route) to point to other targets such as the <a href="https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html">NAT Gateway</a>, which provides the ability to access the internet only internally from outside, ensuring that the worker nodes can still download images from other sources (such as Docker Hub) and interact with the EKS API Server when starting up.</p>
+
+<h2 id="summary">Summary</h2>
+
+<p>In this content, we mentioned common scenarios and causes of the <code>Ec2SubnetInvalidConfiguration</code> error when creating or upgrading an EKS Managed Node Group. In the case of Public Subnets, it is necessary to ensure that the Subnet has the “Auto-assign Public IP address” feature enabled; in the case of Private Subnets, it is necessary to correctly configure the Route Table corresponding to the Private Subnet and keep the internal requests within the VPC, while setting the correct non-VPC request routing to other targets, such as NAT Gateway.</p>
+
+<p>By following the above solutions and related steps, we hope to help you, who are reading this content, to troubleshoot and solve this error more effectively, ensuring that the Managed Node Group runs smoothly.</p>
+
+<h2 id="reference-resources">Reference Resources</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:eks-managed-nodegroup" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/blogs/containers/eks-managed-node-groups/">Extending the EKS API: Managed Node Groups</a> <a href="#fnref:eks-managed-nodegroup" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-nodegroup-update-behavior" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/managed-node-update-behavior.html#managed-node-update-scale-up">Managed node update behavior - Scale up phase</a> <a href="#fnref:eks-managed-nodegroup-update-behavior" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-issues" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/APIReference/API_Issue.html">Amazon EKS resource Issue</a> <a href="#fnref:eks-issues" class="reversefootnote" role="doc-backlink">&#8617;</a> <a href="#fnref:eks-issues:1" class="reversefootnote" role="doc-backlink">&#8617;<sup>2</sup></a></p>
+    </li>
+    <li id="fn:subnet-diagram" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/vpc/latest/userguide/configure-subnets.html#subnet-diagram">Subnets for your VPC - Subnet diagram</a> <a href="#fnref:subnet-diagram" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-feature-request-607" role="doc-endnote">
+      <p><a href="https://github.com/aws/containers-roadmap/issues/607">[EKS] [request]: Remove requirement of public IPs on EKS managed worker nodes #607</a> <a href="#fnref:eks-feature-request-607" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-vpc-subnet-considerations" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/network_reqs.html#network-requirements-subnets">Amazon EKS VPC and subnet requirements and considerations - Subnet requirements and considerations</a> <a href="#fnref:eks-vpc-subnet-considerations" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2023-06-03">03 Jun 2023</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/nsa-kubernetes-hardening-guide/">&laquo; Strengthening Kubernetes Security: Kubernetes Hardening Guidance released by NSA and CISA</a>
+                </div>
+              
+              
+                <div class="col-md-6 text-right pr-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error/">Troubleshooting EKS Managed Node Group PodEvictionFailure Error &raquo;</a>
+                </div>
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#how-to-identify-this-issue">How to identify this issue?</a></li>
+<li class="toc-entry toc-h2"><a href="#common-scenarios-and-causes">Common scenarios and causes</a></li>
+<li class="toc-entry toc-h2"><a href="#solutions-and-steps">Solutions and Steps</a></li>
+<li class="toc-entry toc-h2"><a href="#summary">Summary</a></li>
+<li class="toc-entry toc-h2"><a href="#reference-resources">Reference Resources</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+
+<!-- Begin Default Newsletter Signup Form -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>Sign up to get the update</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail Address" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('Request has been sent!').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('You are in the mailing list!').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/" alt="Home">Home</a>
+    </li>
+    
+    <li>
+      <a href="/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

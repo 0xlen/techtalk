@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>EKS Managed Node Group: 解決 PodEvictionFailure 錯誤 | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/tw/troubleshooting-eks-PodEvictionFailure-error/" /-->
+
+<meta http-equiv="Content-Language" content="tw">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>EKS Managed Node Group: 解決 PodEvictionFailure 錯誤 | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="EKS Managed Node Group: 解決 PodEvictionFailure 錯誤" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="自上篇提及 2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) 1 和簡介 Ec2SubnetInvalidConfiguration 的錯誤排查後，本篇內容將進一步探討在執行 Managed Node Group 升級過程遭遇的 PodEvictionFailure 錯誤。 Extending the EKS API: Managed Node Groups &#8617;" />
+<meta property="og:description" content="自上篇提及 2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) 1 和簡介 Ec2SubnetInvalidConfiguration 的錯誤排查後，本篇內容將進一步探討在執行 Managed Node Group 升級過程遭遇的 PodEvictionFailure 錯誤。 Extending the EKS API: Managed Node Groups &#8617;" />
+<link rel="canonical" href="https://easontechtalk.com/tw/troubleshooting-eks-PodEvictionFailure-error/" />
+<meta property="og:url" content="https://easontechtalk.com/tw/troubleshooting-eks-PodEvictionFailure-error/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-06-03T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png" />
+<meta property="twitter:title" content="EKS Managed Node Group: 解決 PodEvictionFailure 錯誤" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2023-06-03T00:00:00+00:00","datePublished":"2023-06-03T00:00:00+00:00","description":"自上篇提及 2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) 1 和簡介 Ec2SubnetInvalidConfiguration 的錯誤排查後，本篇內容將進一步探討在執行 Managed Node Group 升級過程遭遇的 PodEvictionFailure 錯誤。 Extending the EKS API: Managed Node Groups &#8617;","headline":"EKS Managed Node Group: 解決 PodEvictionFailure 錯誤","image":"https://easontechtalk.com/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/tw/troubleshooting-eks-PodEvictionFailure-error/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/tw/troubleshooting-eks-PodEvictionFailure-error/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/tw/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/tw/" alt="首頁">首頁</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/tw/about/" alt="關於">關於</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/?" alt="English">English</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png" alt="EKS Managed Node Group: 解決 PodEvictionFailure 錯誤">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/tw/categories#amazon-elastic-kubernetes-service-eks">Amazon Elastic Kubernetes Service (EKS)</a>
+                        </li>
+                        
+                        <li>
+                         <a href="/tw/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">EKS Managed Node Group: 解決 PodEvictionFailure 錯誤</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>自上篇提及 2019 年 EKS 釋出了新的 API 支援 Managed Node Groups (託管式工作節點) <sup id="fnref:eks-managed-nodegroup" role="doc-noteref"><a href="#fn:eks-managed-nodegroup" class="footnote" rel="footnote">1</a></sup> 和簡介 <code>Ec2SubnetInvalidConfiguration</code> 的錯誤排查後，本篇內容將進一步探討在執行 Managed Node Group 升級過程遭遇的 <code>PodEvictionFailure</code> 錯誤。</p>
+
+<p><code>PodEvictionFailure</code> 錯誤是在 EKS 進行節點組升級時會遇到的常見錯誤之一，通常是使用 AWS Console 介面、<code>aws eks update-nodegroup-version</code> 命令或是 <code>UpdateNodegroupVersion</code> API 呼叫時產生。本文將進一步分析這個錯誤的原因、常見情境以及解決方法。</p>
+
+<h2 id="如何確認該問題">如何確認該問題</h2>
+
+<p>要檢查 EKS Managed Node Groups 是否存在 <code>PodEvictionFailure</code> 錯誤，可以透過 EKS Console 或是 AWS CLI 命令確認是否存在任何錯誤。例如，透過點擊 Cluster 底下的 <code>Compute</code> 頁籤 &gt; 點擊 <code>Node groups</code> 進入到節點組的詳細頁面後，可以檢查 <code>Update history</code> 頁籤相關的升級事件是否存在相關的錯誤訊息：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png" alt="" /></p>
+
+<p>再進一步點擊個別的升級事件，便可以進一步看到詳細資訊和錯誤：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-detail.png" alt="" /></p>
+
+<p>根據文件提到 EKS Managed Node Group 的升級流程 <sup id="fnref:eks-managed-nodegroup-update-behavior" role="doc-noteref"><a href="#fn:eks-managed-nodegroup-update-behavior" class="footnote" rel="footnote">2</a></sup>，如果升級或是新建節點超過 15-20 分鐘後卡住，很可能是某些原因使得工作節點在運作時存在一些問題，過一段時間後，通常有機會透過這些資訊進一步排查可能的原因。以下是使用 AWS CLI 命令的範例：</p>
+
+<pre><code class="language-bash">$ aws eks list-updates --name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt;
+{
+    "updateIds": [
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE"
+    ]
+}
+
+$ aws eks describe-update --name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt; --update-id AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE
+{
+    "update": {
+        "id": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE",
+        "status": "Failed",
+        "type": "VersionUpdate",
+        "params": [
+            {
+                "type": "Version",
+                "value": "1.26"
+            },
+            {
+                "type": "ReleaseVersion",
+                "value": "1.26.4-20230526"
+            }
+        ],
+        "createdAt": "2023-06-03T17:19:38.068000+00:00",
+        "errors": [
+            {
+                "errorCode": "PodEvictionFailure",
+                "errorMessage": "Reached max retries while trying to evict pods from nodes in node group &lt;NODE_GROUP_NAME&gt;",
+                "resourceIds": [
+                    "ip-192-168-2-44.eu-west-1.compute.internal"
+                ]
+            }
+        ]
+    }
+}
+</code></pre>
+
+<p>上述範例為在升級時嘗試停用 Pod 超出重試的次數導致失敗，並且該次升級為 <code>Failed</code> 狀態。</p>
+
+<h2 id="常見情境和發生原因">常見情境和發生原因</h2>
+
+<h3 id="pod-disruption-budget-pdb">Pod Disruption Budget (PDB)</h3>
+
+<p>Pod Disruption Budget (PDB) 是 Kubernetes 內的一個資源物件，用於確保在進行維護、升級、回滾等操作時，對於特定部署的可用性不會被破壞 <sup id="fnref:pdb" role="doc-noteref"><a href="#fn:pdb" class="footnote" rel="footnote">3</a></sup>。</p>
+
+<p>PDB 通常用在設定 Pod 的最小 (可用) 運行數量，當進行維護操作時，Kubernetes 會確保在目前集群中 Pod 的運行數量不會低於這個數字。這樣可以確保在進行維護等操作時，服務的可用性不會受到影響或是中斷 (Pod)。</p>
+
+<p>以下是一個 PDB 的範例：</p>
+
+<pre><code>apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: my-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: my-app
+
+</code></pre>
+
+<p>在這個範例中，我們設定了一個 PDB，最小可用數量為 2 個，選擇器為 <code>app=my-app</code>。這表示在進行維護等操作時，Kubernetes 會確保至少有 2 個符合選擇器的 Pod 可用。</p>
+
+<p>PDB 的設定可以幫助您在進行維護等操作時確保 Pod 的可用性，同時也可以減少可能出現的 <code>PodEvictionFailure</code> 錯誤。在設計應用程式時，建議您考慮使用 PDB 來確保應用程式的可用性。</p>
+
+<h4 id="podevictionfailure-和-pdb-之間的關係">PodEvictionFailure 和 PDB 之間的關係</h4>
+
+<p><code>PodEvictionFailure</code> 錯誤通常是由於 EKS 無法在要更新的工作節點上節點上停用 Pod 引起。在進行 Managed Node Group 升級替換操作時，如果目前要被更新的節點上運行的目標 Pod 的運行數量低於 PDB 中設定的最小值，那麼 Kubernetes 就會拒絕刪除 Pod，在這種情況下，就可能會觸發升級過程產生的 <code>PodEvictionFailure</code> 錯誤。例如，以下的環境中部署了一個 Kubernetes Deployment (<code>nginx-deploymnet</code>)，並且在目前環境中的唯一節點 <code>ip-192-168-2-44.eu-west-1.compute.internal</code> 上運行：</p>
+
+<pre><code class="language-bash">NAMESPACE     NAME                                   READY   STATUS    RESTARTS      AGE   IP               NODE                                           NOMINATED NODE   READINESS GATES
+default       pod/nginx-deployment-ff6774dc6-dntfm   1/1     Running   0             45m   192.168.7.16     ip-192-168-2-44.eu-west-1.compute.internal
+
+NAMESPACE     NAME                               READY   UP-TO-DATE   AVAILABLE   AGE   CONTAINERS
+default       deployment.apps/nginx-deployment   1/1     1            1           49m   nginx
+</code></pre>
+
+<p>同時，該環境中設定了以下 <code>PodDisruptionBudget</code> 資源 (這個 <code>nginx-deployment</code> 所有 Pod 存在 <code>app=nginx</code> 標籤)：</p>
+
+<pre><code class="language-yaml">apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nginx-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: nginx
+</code></pre>
+
+<p>通常在執行更新或是替換節點過程時，我們通常會需要將節點標記為不可調度以及停用在上面運行的應用，在 Kubernetes 中，提供了 <code>kubectl drain</code> 這類方法支援這個操作 <sup id="fnref:kubectl-drain" role="doc-noteref"><a href="#fn:kubectl-drain" class="footnote" rel="footnote">4</a></sup>。一旦執行 <code>kubectl drain</code> 將節點設定為維護狀態時，它會觸發 Kubernetes Scheduler 將節點上的 Pod 進行重新調度。</p>
+
+<p>此外，在重新調度之前，<code>kubectl drain</code> 命令會將節點標記為不可調度，這樣新的 Pod 就不會被調度到該節點上。同時，已在節點上運行的 Pod 會被逐一停用。但在違反 <code>PodDisruptionBudget</code> 情況下，這樣的操作很可能會失敗，例如，以下就是一個在存在 PDB 時無法正確停用的範例：</p>
+
+<pre><code class="language-bash">$ kubectl drain ip-192-168-2-44.eu-west-1.compute.internal --ignore-daemonsets --delete-emptydir-data
+node/ip-192-168-2-44.eu-west-1.compute.internal already cordoned
+WARNING: ignoring DaemonSet-managed Pods: kube-system/aws-node-n9lc5, kube-system/kube-proxy-lwxcb
+evicting pod kube-system/coredns-6866f5c8b4-r96z8
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+evicting pod kube-system/coredns-6866f5c8b4-h296r
+
+pod/coredns-6866f5c8b4-r96z8 evicted
+pod/coredns-6866f5c8b4-h296r evicted
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+...
+</code></pre>
+
+<h3 id="deployment-允許-容忍-在存在污點-taint-的節點上部署">Deployment 允許 (容忍) 在存在污點 (Taint) 的節點上部署</h3>
+
+<p>在 Kubernetes 中，Taints（污點）和 Tolerations（容忍）是用於控制 Pod 能否被調度到特定節點的機制。Taints 是對節點的標記，表示節點具有某些特定的限制或要求。而 Tolerations 則是由 Pod 定義，用於告訴 Kubernetes 這個 Pod 可以容忍哪些節點的 Taints，進而允許或阻止 Pod 被調度到符合條件的節點上。<sup id="fnref:k8s-taints-tolerations" role="doc-noteref"><a href="#fn:k8s-taints-tolerations" class="footnote" rel="footnote">5</a></sup></p>
+
+<p>然而，不正確的 <code>tolerations</code> 設定很可能使得在預期進行替換的節點中，仍持續調度應用程式到節點上，例如，以下範例直接忽略了在 Node 關聯的 Taint 設定：</p>
+
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  ...
+  template:
+    ...
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+      tolerations:
+        - operator: "Exists"
+    ...
+</code></pre>
+
+<p>如同前面提到，在重新調度之前，<code>kubectl drain</code> 命令會將節點標記為不可調度，這樣新的 Pod 就不會被調度到該節點上。執行這項操作時，Kubernetes 也會替節點設定 <code>node.kubernetes.io/unschedulable:NoSchedule</code> 的污點：</p>
+
+<pre><code class="language-bash">$ kubectl get nodes
+NAME                                         STATUS                     ROLES    AGE    VERSION
+ip-192-168-2-44.eu-west-1.compute.internal   Ready,SchedulingDisabled   &lt;none&gt;   126m   v1.25.9-eks-0a21954
+
+$ kubectl describe node
+Name:               ip-192-168-2-44.eu-west-1.compute.internal
+...
+Taints:             node.kubernetes.io/unschedulable:NoSchedule
+</code></pre>
+
+<p>但在使用上述 <code>tolerations</code> 設定時，對應應用程式的調度行為會直接忽略這項設定，例如，以下就是在 Node 執行 <code>kubectl drain</code> 仍持續執行 Pod 調度的過程：</p>
+
+<pre><code class="language-bash">NAME                                READY   STATUS    RESTARTS   AGE   IP              NODE
+nginx-deployment-6876484bcc-h28sn   1/1     Running   0          25s   192.168.9.175   ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-h28sn   1/1     Terminating   0          38s   192.168.9.175   ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   0/1     Pending       0          0s    &lt;none&gt;          ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   0/1     ContainerCreating   0          0s    &lt;none&gt;          ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   1/1     Running             0          2s    192.168.18.140   ip-192-168-2-44.eu-west-1.compute.internal
+</code></pre>
+
+<p>對於 EKS Managed Node Group 升級操作的行為來說，該節點並為完全停用 Pod 且屬於未清空的狀態，使得更新過程發生 <code>PodEvictionFailure</code> 錯誤。</p>
+
+<h3 id="pod-本身存在錯誤">Pod 本身存在錯誤</h3>
+
+<p>如果並非上述問題導致，則可能指出 Pod 基於某些原因無法正常關閉，例如：應用程式與 NFS 互動但執行操作卡在 I/O 行為、網路問題或資源不足 (像是 CPU 負載過高使得系統無法反應) 等原因導致。</p>
+
+<p>要先確定出錯 Pod 的狀態和原因，您可以使用以下命令來查看詳細的 Pod 狀態或是相關的紀錄日誌來確定問題的原因：</p>
+
+<pre><code class="language-bash">$ kubectl describe pod
+$ kubectl logs &lt;POD_NAME&gt;
+</code></pre>
+
+<h2 id="解決方法和相關步驟">解決方法和相關步驟</h2>
+
+<h3 id="pod-disruption-budget-pdb-1">Pod Disruption Budget (PDB)</h3>
+
+<p>要確認是否因為 Pod Disruption Budget (PDB) 影響升級，可以透過以下命令確認目前有的 PDB 設定：</p>
+
+<pre><code class="language-bash">kubectl get pdb --all-namespaces
+</code></pre>
+
+<p>如果有開啟 EKS Control Plane Logging (稽核記錄)，也可以透過 CloudWatch Log Insight 功能篩選並檢查是否存在任何相關的失敗事件，</p>
+
+<ol>
+  <li>在 <code>Cluster</code> &gt; <code>Logging</code> (記錄) 標籤下，選擇 <code>Audit</code> (稽核) 可以直接開啟 Amazon CloudWatch Console。</li>
+  <li>在 Amazon CloudWatch 主控台中，選擇 Logs (日誌)。然後，選擇 Log Insights (日誌洞察) 對 EKS 產生的稽核紀錄檔進行篩選</li>
+</ol>
+
+<p>以下為相關查詢範例：</p>
+
+<pre><code class="language-query">fields @timestamp, @message
+| filter @logStream like "kube-apiserver-audit"
+| filter ispresent(requestURI)
+| filter objectRef.subresource = "eviction"
+| display @logStream, requestURI, responseObject.message
+| stats count(*) as retry by requestURI, responseObject.message
+</code></pre>
+
+<p>透過上述檢視稽核紀錄，可以進一步確認在停用 Pod 事件中是否存在任何因為 Pod Disruption Budget 影響的具體資訊：</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png" alt="" /></p>
+
+<p>如果是因為 PDB 導致升級失敗，可以修改或是移除 PDB 後，再次嘗試執行升級：</p>
+
+<pre><code class="language-bash"># Edit
+$ kubectl edit pdb &lt;PDB_NAME&gt;
+
+# Delete
+$ kubectl delete pdb &lt;PDB_NAME&gt;
+</code></pre>
+
+<h3 id="錯誤的-tolerations-設定">錯誤的 Tolerations 設定</h3>
+
+<p>前面提到不正確的 <code>tolerations</code> 設定，很可能使得在預期進行替換的節點中，仍持續調度應用程式到節點上。可以透過修正對應部署的設定解決這項問題：</p>
+
+<pre><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  ...
+  template:
+    ...
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+      tolerations: &lt;---- 修正設定
+        - operator: "Exists"
+    ...
+</code></pre>
+
+<h3 id="採用強制更新-force-update">採用強制更新 (Force update)</h3>
+
+<p>預設情況下，EKS Managed Node Group 的升級會採用 Rolling update (滾動更新) 方法，這個選項在升級過程會遵守 Pod Disruption Budget (PDB) 設定。若因為 PDB 導致無法正確停用，升級過程將會失敗。</p>
+
+<p>如果因為前述 PDB 或其他原因無法正確升級，也可以透過在升級過程選擇 Force update (強制更新) 進行升級，這個選項會在升級過程忽略 PDB 設定。無論 PDB 問題是否出現，都會強制節點重新啟動以進行更新。</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-force-update-option.png" alt="" /></p>
+
+<p>以下為使用 AWS CLI 的範例：</p>
+
+<pre><code class="language-bash">$ aws eks update-nodegroup-version --cluster-name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt; --force
+</code></pre>
+
+<p>以下為使用 eksctl 的範例：</p>
+
+<pre><code class="language-bash">$ eksctl upgrade nodegroup --cluster &lt;CLUSTER_NAME&gt; --name &lt;NODE_GROUP_NAME&gt; --force-upgrade
+</code></pre>
+
+<h2 id="總結">總結</h2>
+
+<p>在這篇內容中，我們提到了升級 EKS Managed Node Group 時遇到 <code>PodEvictionFailure</code> 錯誤的常見情境和發生原因，並且提出相關的解決方法，例如：</p>
+
+<ul>
+  <li>檢查 PodDisruptionBudget (PDB) 設定是否有誤，如果是 PDB 導致升級失敗，可以修改或是移除 PDB 後再次執行升級。</li>
+  <li>檢查 Tolerations 設定是否有誤。錯誤的 Tolerations 設定很可能使得在預期進行替換的節點中，仍持續調度應用程式到節點上，需修正對應部署的設定。</li>
+</ul>
+
+<p>最後，如果以上方法仍無法解決問題，可以採用強制更新 (Force update) 進行升級。此選項會在升級過程中忽略 PDB 設定，並強制節點重新啟動以進行更新<sup id="fnref:troubleshoot-nodegroup-update-failures" role="doc-noteref"><a href="#fn:troubleshoot-nodegroup-update-failures" class="footnote" rel="footnote">6</a></sup> <sup id="fnref:eks-managed-node-group-update-issue" role="doc-noteref"><a href="#fn:eks-managed-node-group-update-issue" class="footnote" rel="footnote">7</a></sup>。</p>
+
+<p>透過遵循上述的解決方法和相關步驟，希望能幫助在閱讀這篇內容的你更有方向的排查並且解決這個錯誤。</p>
+
+<h2 id="參考資源">參考資源</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:eks-managed-nodegroup" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/blogs/containers/eks-managed-node-groups/">Extending the EKS API: Managed Node Groups</a> <a href="#fnref:eks-managed-nodegroup" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-nodegroup-update-behavior" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/managed-node-update-behavior.html#managed-node-update-scale-up">Managed node update behavior - Scale up phase</a> <a href="#fnref:eks-managed-nodegroup-update-behavior" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:pdb" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/workloads/pods/disruptions/#pod-disruption-budgets">Kubernetes Documentation - Pod disruption budgets</a> <a href="#fnref:pdb" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubectl-drain" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/">Kubernetes Documentation - Safely Drain a Node</a> <a href="#fnref:kubectl-drain" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-taints-tolerations" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/">Kubernetes Documentation - Taints and Tolerations</a> <a href="#fnref:k8s-taints-tolerations" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:troubleshoot-nodegroup-update-failures" role="doc-endnote">
+      <p><a href="https://repost.aws/knowledge-center/eks-node-group-update-failures">How do I troubleshoot common issues with Amazon EKS node group update failures?</a> <a href="#fnref:troubleshoot-nodegroup-update-failures" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-node-group-update-issue" role="doc-endnote">
+      <p><a href="https://repost.aws/knowledge-center/eks-managed-node-group-update">How can I troubleshoot managed node group update issues for Amazon EKS?</a> <a href="#fnref:eks-managed-node-group-update-issue" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2023-06-03">03 Jun 2023</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/tw/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/">&laquo; EKS Managed Node Group: 解決 Ec2SubnetInvalidConfiguration 錯誤</a>
+                </div>
+              
+              
+                <div class="col-md-6 text-right pr-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/tw/utilize-eks-cluster-health-status/">使用 EKS Cluster Health 資訊監控你的叢集健康狀態 &raquo;</a>
+                </div>
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#如何確認該問題">如何確認該問題</a></li>
+<li class="toc-entry toc-h2"><a href="#常見情境和發生原因">常見情境和發生原因</a></li>
+<li class="toc-entry toc-h2"><a href="#解決方法和相關步驟">解決方法和相關步驟</a></li>
+<li class="toc-entry toc-h2"><a href="#總結">總結</a></li>
+<li class="toc-entry toc-h2"><a href="#參考資源">參考資源</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+<!-- Begin Newsletter Signup Form (TW) -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>訂閱並取得更新</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="免費訂閱" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('請求已送出！').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('你已經加入至訂閱清單！').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('訂閱失敗，請檢查是否符合格式並重試。').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('訂閱失敗，請檢查是否符合格式並重試。').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/tw/" alt="回首頁">回首頁</a>
+    </li>
+    
+    <li>
+      <a href="/tw/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>

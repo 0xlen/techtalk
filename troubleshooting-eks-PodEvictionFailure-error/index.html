@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<link rel="icon" href="/assets/images/favicon.ico">
+
+<title>Troubleshooting EKS Managed Node Group PodEvictionFailure Error | Eason Tech Talk</title>
+
+<!-- Handle Multiple Language SEO -->
+
+<!--meta property="og:url" content="https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error/" /-->
+
+<meta http-equiv="Content-Language" content="en">
+<link rel="alternate" hreflang="en" href="https://easontechtalk.com"/>
+<link rel="alternate" hreflang="tw" href="https://easontechtalk.com/tw/"/>
+
+<!-- Handle Multiple Language SEO End -->
+
+<!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Troubleshooting EKS Managed Node Group PodEvictionFailure Error | Eason Tech Talk</title>
+<meta name="generator" content="Jekyll v4.3.3" />
+<meta property="og:title" content="Troubleshooting EKS Managed Node Group PodEvictionFailure Error" />
+<meta name="author" content="eason" />
+<meta property="og:locale" content="en_us" />
+<meta name="description" content="As mentioned in the previous article, in 2019 EKS released a new API that supports Managed Node Groups 1 and introduced the error Ec2SubnetInvalidConfiguration. This article will further explore the PodEvictionFailure error encountered during the Managed Node Group upgrade process. Extending the EKS API: Managed Node Groups &#8617;" />
+<meta property="og:description" content="As mentioned in the previous article, in 2019 EKS released a new API that supports Managed Node Groups 1 and introduced the error Ec2SubnetInvalidConfiguration. This article will further explore the PodEvictionFailure error encountered during the Managed Node Group upgrade process. Extending the EKS API: Managed Node Groups &#8617;" />
+<link rel="canonical" href="https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error/" />
+<meta property="og:url" content="https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error/" />
+<meta property="og:site_name" content="Eason Tech Talk" />
+<meta property="og:image" content="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2023-06-03T00:00:00+00:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta property="twitter:image" content="https://easontechtalk.com/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png" />
+<meta property="twitter:title" content="Troubleshooting EKS Managed Node Group PodEvictionFailure Error" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"eason"},"dateModified":"2023-06-03T00:00:00+00:00","datePublished":"2023-06-03T00:00:00+00:00","description":"As mentioned in the previous article, in 2019 EKS released a new API that supports Managed Node Groups 1 and introduced the error Ec2SubnetInvalidConfiguration. This article will further explore the PodEvictionFailure error encountered during the Managed Node Group upgrade process. Extending the EKS API: Managed Node Groups &#8617;","headline":"Troubleshooting EKS Managed Node Group PodEvictionFailure Error","image":"https://easontechtalk.com/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png","mainEntityOfPage":{"@type":"WebPage","@id":"https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error/"},"publisher":{"@type":"Organization","logo":{"@type":"ImageObject","url":"https://easontechtalk.com/assets/images/logo.png"},"name":"eason"},"url":"https://easontechtalk.com/troubleshooting-eks-PodEvictionFailure-error/"}</script>
+<!-- End Jekyll SEO tag -->
+
+
+<link href="/assets/css/theme.css" rel="stylesheet">
+
+<!-- custom CSS - Remove this if you don't use it or choose to customize the stylesheet with sass-->
+<link href="/assets/css/custom.css" rel="stylesheet">
+<!-- custom CSS end-->
+    
+       
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-3QPJPEHDZP"></script>
+<script>
+window.dataLayer = window.dataLayer || [];
+function gtag(){dataLayer.push(arguments);}
+gtag('js', new Date());
+gtag('config', 'G-3QPJPEHDZP');
+</script>
+
+   
+</head>   
+    
+
+<body class="layout-post">
+
+    
+<!-- Menu Navigation
+================================================== -->
+<div class="navigation-wrap start-header start-style">
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+
+          <a class="navbar-brand text-dark font-weight-bold big d-flex align-items-center" href="/">
+          
+          <img class="mr-2" src="/assets/images/logo.png" alt="logo"> 
+          
+          </a> | 
+          
+
+          <div class="d-flex align-items-center">
+            
+            <span class="ml-3 text-muted small">Follow</span>
+
+            
+            
+            
+      
+            
+            <a class="d-inline-block social-icon" target="_blank" href="https://www.facebook.com/EasonTechTalk">
+              <svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" fill="currentColor" class="bi bi-facebook" viewBox="0 0 16 16">
+              <path d="M16 8.049c0-4.446-3.582-8.05-8-8.05C3.58 0-.002 3.603-.002 8.05c0 4.017 2.926 7.347 6.75 7.951v-5.625h-2.03V8.05H6.75V6.275c0-2.017 1.195-3.131 3.022-3.131.876 0 1.791.157 1.791.157v1.98h-1.009c-.993 0-1.303.621-1.303 1.258v1.51h2.218l-.354 2.326H9.25V16c3.824-.604 6.75-3.934 6.75-7.951z"/>
+            </svg>
+            </a>
+            
+
+          </div>
+    
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+            <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" fill="currentColor" class="bi bi-three-dots-vertical" viewBox="0 0 16 16">
+              <path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0zm0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0z"/>
+            </svg>
+          </button>
+          
+          <div class="collapse navbar-collapse" id="navbarResponsive">
+            <ul class="navbar-nav ml-auto font-weight-bold d-flex align-items-center">
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/" alt="Home">Home</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 " href="/about/" alt="About">About</a>
+              </li>
+              
+              <li class="nav-item">
+                <a class="nav-link px-3 ml-2 btn btn-dark text-white px-3" href="/tw/" alt="中文 Chinese">中文 Chinese</a>
+              </li>
+              
+            </ul>
+          </div>
+
+        </div>
+      </nav>
+    </div>  
+
+    
+<!-- Container
+================================================== -->    
+<main class="container">   
+      <!-- Begin Article
+================================================== -->
+
+	<div class="row">
+		
+
+		<!-- Post -->        
+        
+        
+		<div class="col-sm-8">
+            <!-- Post Featured Image -->
+			<img class="featured-image img-fluid rounded" src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/cover.png" alt="Troubleshooting EKS Managed Node Group PodEvictionFailure Error">
+			<!-- End Featured Image -->
+			<div class="mainheading">             
+                
+                <!-- Post Categories -->
+                <div class="after-post-tags">
+                    <ul class="tags">
+                        
+                        
+                        <li>
+                         <a href="/categories#amazon-elastic-kubernetes-service-eks">Amazon Elastic Kubernetes Service (EKS)</a>
+                        </li>
+                        
+                        <li>
+                         <a href="/categories#kubernetes">Kubernetes</a>
+                        </li>
+                        
+                    </ul>
+                </div>
+                <!-- End Categories -->
+                
+                <!-- Post Title -->
+				<h1 class="posttitle">Troubleshooting EKS Managed Node Group PodEvictionFailure Error</h1> 
+                
+			</div>
+
+			
+
+			<!-- Post Content -->
+			<div class="article-post serif-font">
+				<p>As mentioned in the previous article, in 2019 EKS released a new API that supports Managed Node Groups <sup id="fnref:eks-managed-nodegroup" role="doc-noteref"><a href="#fn:eks-managed-nodegroup" class="footnote" rel="footnote">1</a></sup> and introduced the error <code>Ec2SubnetInvalidConfiguration</code>. This article will further explore the <code>PodEvictionFailure</code> error encountered during the Managed Node Group upgrade process.</p>
+
+<p>The <code>PodEvictionFailure</code> error is a common error encountered during node group upgrades in EKS, typically when using the AWS Console, the <code>aws eks update-nodegroup-version</code> command or the <code>UpdateNodegroupVersion</code> API call. This article will further analyze the reasons, common scenarios, and solutions to this error.</p>
+
+<h2 id="how-to-identify-the-issue">How to Identify the Issue</h2>
+
+<p>To check if there are any <code>PodEvictionFailure</code> errors in the EKS Managed Node Groups, you can use the EKS Console or AWS CLI command to check for any issues. For example, by clicking the <code>Compute</code> tab under Cluster, then clicking on <code>Node groups</code>, you can check if there are any error messages related to the upgrade events in the <code>Update history</code> tab:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png" alt="Nodegroup update history" /></p>
+
+<p>By clicking on an individual upgrade event, you can see more detailed information about the error:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-detail.png" alt="Nodegroup update details" /></p>
+
+<p>According to the EKS Managed Node Group upgrade process <sup id="fnref:eks-managed-nodegroup-update-behavior" role="doc-noteref"><a href="#fn:eks-managed-nodegroup-update-behavior" class="footnote" rel="footnote">2</a></sup>, if the upgrade or creation of a node takes more than 15-20 minutes, it is likely that there are problems with the working nodes. After a period of time, it is usually possible to further investigate the possible causes using this information. Here’s an example of using an AWS CLI command:</p>
+
+<pre><code>$ aws eks list-updates --name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt;
+{
+    "updateIds": [
+        "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE"
+    ]
+}
+
+$ aws eks describe-update --name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt; --update-id AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE
+{
+    "update": {
+        "id": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEEE",
+        "status": "Failed",
+        "type": "VersionUpdate",
+        "params": [
+            {
+                "type": "Version",
+                "value": "1.26"
+            },
+            {
+                "type": "ReleaseVersion",
+                "value": "1.26.4-20230526"
+            }
+        ],
+        "createdAt": "2023-06-03T17:19:38.068000+00:00",
+        "errors": [
+            {
+                "errorCode": "PodEvictionFailure",
+                "errorMessage": "Reached max retries while trying to evict pods from nodes in node group &lt;NODE_GROUP_NAME&gt;",
+                "resourceIds": [
+                    "ip-192-168-2-44.eu-west-1.compute.internal"
+                ]
+            }
+        ]
+    }
+}
+
+</code></pre>
+
+<p>In the example above, the upgrade failed due to exceeding the maximum number of retries when trying to stop Pods during the upgrade, and the upgrade status is <code>Failed</code>.</p>
+
+<h2 id="common-scenarios-and-causes">Common Scenarios and Causes</h2>
+
+<h3 id="pod-disruption-budget-pdb">Pod Disruption Budget (PDB)</h3>
+
+<p>Pod Disruption Budget (PDB) <sup id="fnref:pdb" role="doc-noteref"><a href="#fn:pdb" class="footnote" rel="footnote">3</a></sup> is a Kubernetes resource object used to ensure that the availability of a particular deployment is not disrupted during maintenance, upgrades, rollbacks, etc. PDB is typically used to set the minimum number of Pods running. When performing maintenance operations, Kubernetes ensures that the number of Pods running in the current cluster is not less than this number. This ensures that the availability of the service is not affected or interrupted during maintenance.</p>
+
+<p>Here’s an example of a PDB:</p>
+
+<pre><code>apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: my-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: my-app
+
+</code></pre>
+
+<p>In this example, we set a PDB with a minimum availability of 2, and the selector is <code>app=my-app</code>. This means that when performing maintenance operations, Kubernetes ensures that at least 2 Pods that match the selector are available.</p>
+
+<p>PDB configuration can help ensure the availability of Pods during maintenance operations and can reduce the likelihood of <code>PodEvictionFailure</code> errors. When designing applications, it is recommended that PDB be used to ensure the availability of the application.</p>
+
+<h3 id="relationship-between-podevictionfailure-and-pdb">Relationship between PodEvictionFailure and PDB</h3>
+
+<p>The <code>PodEvictionFailure</code> error is usually caused by EKS being unable to stop Pods on the nodes to be updated. When performing Managed Node Group upgrade and replacement operations, if the number of target Pods running on the nodes to be updated is less than the minimum value set in PDB, Kubernetes will refuse to delete Pods. In this case, the <code>PodEvictionFailure</code> error may occur during the upgrade process. For example, the following environment deploys a Kubernetes Deployment (<code>nginx-deploymnet</code>) and runs it on the only node <code>ip-192-168-2-44.eu-west-1.compute.internal</code> in the current environment:</p>
+
+<pre><code>NAMESPACE     NAME                                   READY   STATUS    RESTARTS      AGE   IP               NODE                                           NOMINATED NODE   READINESS GATES
+default       pod/nginx-deployment-ff6774dc6-dntfm   1/1     Running   0             45m   192.168.7.16     ip-192-168-2-44.eu-west-1.compute.internal
+
+NAMESPACE     NAME                               READY   UP-TO-DATE   AVAILABLE   AGE   CONTAINERS
+default       deployment.apps/nginx-deployment   1/1     1            1           49m   nginx
+
+</code></pre>
+
+<p>At the same time, the following <code>PodDisruptionBudget</code> resource is set in the environment (all Pods of this <code>nginx-deployment</code> have the <code>app=nginx</code> label):</p>
+
+<pre><code>apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nginx-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: nginx
+
+</code></pre>
+
+<p>When performing update or replacement node processes, we usually need to mark the nodes as unscheduled and stop the applications running on them. Kubernetes provides methods like <code>kubectl drain</code> to support this operation <sup id="fnref:kubectl-drain" role="doc-noteref"><a href="#fn:kubectl-drain" class="footnote" rel="footnote">4</a></sup>. Once <code>kubectl drain</code> marks the node as being in maintenance mode, it triggers Kubernetes Scheduler to reschedule the Pods on the node.</p>
+
+<p>In addition, before rescheduling, the <code>kubectl drain</code> command marks the node as unscheduled so that new Pods are not scheduled on the node. At the same time, the Pods that are already running on the node will be stopped one by one. However, in the case of violating the <code>PodDisruptionBudget</code>, such an operation is likely to fail. For example, the following is an example that cannot be stopped correctly in the presence of PDB:</p>
+
+<pre><code>$ kubectl drain ip-192-168-2-44.eu-west-1.compute.internal --ignore-daemonsets --delete-emptydir-data
+node/ip-192-168-2-44.eu-west-1.compute.internal already cordoned
+WARNING: ignoring DaemonSet-managed Pods: kube-system/aws-node-n9lc5, kube-system/kube-proxy-lwxcb
+evicting pod kube-system/coredns-6866f5c8b4-r96z8
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+evicting pod kube-system/coredns-6866f5c8b4-h296r
+
+pod/coredns-6866f5c8b4-r96z8 evicted
+pod/coredns-6866f5c8b4-h296r evicted
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+
+evicting pod default/nginx-deployment-ff6774dc6-dntfm
+error when evicting pods/"nginx-deployment-ff6774dc6-dntfm" -n "default" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+...
+
+</code></pre>
+
+<h3 id="deployment-allows-deployment-on-nodes-with-taints">Deployment allows deployment on nodes with taints</h3>
+
+<p>In Kubernetes, Taints and Tolerations are mechanisms used to control whether Pods can be scheduled on specific nodes. Taints are labels applied to nodes that indicate specific restrictions or requirements for the node. Tolerations, defined by the Pod, tell Kubernetes which taints the Pod can tolerate, allowing or preventing the Pod from being scheduled on nodes that meet certain conditions. <sup id="fnref:k8s-taints-tolerations" role="doc-noteref"><a href="#fn:k8s-taints-tolerations" class="footnote" rel="footnote">5</a></sup></p>
+
+<p>However, incorrect tolerations settings can result in applications being continuously scheduled to nodes where they are expected to be replaced. For example, the following example ignores the Taint settings associated with the Node:</p>
+
+<pre><code>apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  ...
+  template:
+    ...
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+      tolerations:
+        - operator: "Exists"
+    ...
+
+</code></pre>
+
+<p>As mentioned earlier, the <code>kubectl drain</code> command marks the node as unschedulable before rescheduling, so new Pods are not scheduled to that node. During this operation, Kubernetes also sets a Taint on the node: <code>node.kubernetes.io/unschedulable:NoSchedule</code>.</p>
+
+<pre><code>$ kubectl get nodes
+NAME                                         STATUS                     ROLES    AGE    VERSION
+ip-192-168-2-44.eu-west-1.compute.internal   Ready,SchedulingDisabled   &lt;none&gt;   126m   v1.25.9-eks-0a21954
+
+$ kubectl describe node
+Name:               ip-192-168-2-44.eu-west-1.compute.internal
+...
+Taints:             node.kubernetes.io/unschedulable:NoSchedule
+
+</code></pre>
+
+<p>However, when using the above tolerations settings, the corresponding scheduling behavior for the application is ignored. For example, the following is the process of continuously scheduling Pods even after running <code>kubectl drain</code> on the Node:</p>
+
+<pre><code>NAME                                READY   STATUS    RESTARTS   AGE   IP              NODE
+nginx-deployment-6876484bcc-h28sn   1/1     Running   0          25s   192.168.9.175   ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-h28sn   1/1     Terminating   0          38s   192.168.9.175   ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   0/1     Pending       0          0s    &lt;none&gt;          ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   0/1     ContainerCreating   0          0s    &lt;none&gt;          ip-192-168-2-44.eu-west-1.compute.internal
+
+nginx-deployment-6876484bcc-kbgw6   1/1     Running             0          2s    192.168.18.140   ip-192-168-2-44.eu-west-1.compute.internal
+
+</code></pre>
+
+<p>For EKS Managed Node Group upgrade operations, the node is not completely disabled for Pods and remains in an uncleared state, causing a <code>PodEvictionFailure</code> error during the update process.</p>
+
+<h3 id="pod-has-an-error">Pod has an error</h3>
+
+<p>If the problem is not caused by the above, it may indicate that the Pod cannot be shut down for some reason, such as the application interacting with NFS but the operation is stuck in I/O behavior, network problems, or resource constraints (such as high CPU load causing the system to be unresponsive).</p>
+
+<p>To determine the status and cause of the error Pod, you can use the following commands to view detailed Pod status or related log records to determine the cause of the problem:</p>
+
+<pre><code>$ kubectl describe pod
+$ kubectl logs &lt;POD_NAME&gt;
+
+</code></pre>
+
+<h2 id="solution-and-steps">Solution and Steps</h2>
+
+<h3 id="pod-disruption-budget-pdb-1">Pod Disruption Budget (PDB)</h3>
+
+<p>To check if the upgrade was affected by Pod Disruption Budget (PDB), you can use the following command to confirm the current PDB settings:</p>
+
+<pre><code>kubectl get pdb --all-namespaces
+
+</code></pre>
+
+<p>If EKS Control Plane Logging is enabled, you can also use CloudWatch Log Insights to filter and check for any related failure events.</p>
+
+<ol>
+  <li>Under <code>Cluster</code> &gt; <code>Logging</code>, select <code>Audit</code> to open the Amazon CloudWatch Console.</li>
+  <li>In the Amazon CloudWatch console, select <code>Logs</code> and then select <code>Log Insights</code> to filter the audit logs generated by EKS.</li>
+</ol>
+
+<p>The following are examples of query sentence:</p>
+
+<pre><code>fields @timestamp, @message
+| filter @logStream like "kube-apiserver-audit"
+| filter ispresent(requestURI)
+| filter objectRef.subresource = "eviction"
+| display @logStream, requestURI, responseObject.message
+| stats count(*) as retry by requestURI, responseObject.message
+
+</code></pre>
+
+<p>By viewing the audit logs, you can further confirm whether there is any specific information related to Pod Disruption Budget in the events of disabling the Pod:</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-update-history.png" alt="Nodegroup update history" /></p>
+
+<p>If the upgrade fails due to PDB, you can modify or remove the PDB and try to upgrade again:</p>
+
+<pre><code># Edit
+$ kubectl edit pdb &lt;PDB_NAME&gt;
+
+# Delete
+$ kubectl delete pdb &lt;PDB_NAME&gt;
+
+</code></pre>
+
+<h3 id="incorrect-tolerations-configuration">Incorrect Tolerations Configuration</h3>
+
+<p>As mentioned earlier, incorrect <code>tolerations</code> settings may cause the application to continue to be scheduled on nodes that are expected to be replaced. You can solve this problem by correcting the corresponding deployment settings:</p>
+
+<pre><code>apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  ...
+  template:
+    ...
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+      tolerations: &lt;---- Corrected settings
+        - operator: "Exists"
+    ...
+
+</code></pre>
+
+<h3 id="force-update">Force Update</h3>
+
+<p>By default, EKS Managed Node Group upgrades use the Rolling update method, which will comply with the Pod Disruption Budget (PDB) settings during the upgrade process. If the upgrade process fails due to PDB, the upgrade process will fail.</p>
+
+<p>If the upgrade cannot be completed correctly due to PDB or other reasons, you can also choose Force update during the upgrade process to upgrade. This option will ignore the PDB settings during the upgrade process. Regardless of whether PDB issues occur, the nodes will be forcibly restarted for the update.</p>
+
+<p><img src="/assets/images/2023/troubleshooting-eks-PodEvictionFailure-error/nodegroup-force-update-option.png" alt="" /></p>
+
+<p>The following are examples of using AWS CLI:</p>
+
+<pre><code>$ aws eks update-nodegroup-version --cluster-name &lt;CLUSTER_NAME&gt; --nodegroup-name &lt;NODE_GROUP_NAME&gt; --force
+
+</code></pre>
+
+<p>The following are examples of using eksctl:</p>
+
+<pre><code>$ eksctl upgrade nodegroup --cluster &lt;CLUSTER_NAME&gt; --name &lt;NODE_GROUP_NAME&gt; --force-upgrade
+
+</code></pre>
+
+<h2 id="summary">Summary</h2>
+
+<p>In this article, we mentioned the common scenarios and causes of the <code>PodEvictionFailure</code> error encountered during the Managed Node Group upgrade process in EKS, and put forward relevant solutions, such as:</p>
+
+<ul>
+  <li>Check whether the PodDisruptionBudget (PDB) settings are incorrect. If the upgrade fails due to PDB, you can modify or remove the PDB and try to upgrade again.</li>
+  <li>Check whether the Tolerations settings are incorrect. Incorrect Tolerations settings may cause the application to continue to be scheduled on nodes that are expected to be replaced, and the corresponding deployment settings need to be corrected.</li>
+</ul>
+
+<p>Finally, if the above methods still cannot solve the problem, you can choose Force update to upgrade. This option will ignore the PDB settings during the upgrade process and forcibly restart the nodes for the update<sup id="fnref:troubleshoot-nodegroup-update-failures" role="doc-noteref"><a href="#fn:troubleshoot-nodegroup-update-failures" class="footnote" rel="footnote">6</a></sup> <sup id="fnref:eks-managed-node-group-update-issue" role="doc-noteref"><a href="#fn:eks-managed-node-group-update-issue" class="footnote" rel="footnote">7</a></sup>.</p>
+
+<p>By following the above solutions and related steps, I hope to help you read this article more directionally to troubleshoot and solve this error.</p>
+
+<h2 id="references">References</h2>
+
+<div class="footnotes" role="doc-endnotes">
+  <ol>
+    <li id="fn:eks-managed-nodegroup" role="doc-endnote">
+      <p><a href="https://aws.amazon.com/blogs/containers/eks-managed-node-groups/">Extending the EKS API: Managed Node Groups</a> <a href="#fnref:eks-managed-nodegroup" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-nodegroup-update-behavior" role="doc-endnote">
+      <p><a href="https://docs.aws.amazon.com/eks/latest/userguide/managed-node-update-behavior.html#managed-node-update-scale-up">Managed node update behavior - Scale up phase</a> <a href="#fnref:eks-managed-nodegroup-update-behavior" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:pdb" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/workloads/pods/disruptions/#pod-disruption-budgets">Kubernetes Documentation - Pod disruption budgets</a> <a href="#fnref:pdb" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:kubectl-drain" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/">Kubernetes Documentation - Safely Drain a Node</a> <a href="#fnref:kubectl-drain" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:k8s-taints-tolerations" role="doc-endnote">
+      <p><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/">Kubernetes Documentation - Taints and Tolerations</a> <a href="#fnref:k8s-taints-tolerations" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:troubleshoot-nodegroup-update-failures" role="doc-endnote">
+      <p><a href="https://repost.aws/knowledge-center/eks-node-group-update-failures">How do I troubleshoot common issues with Amazon EKS node group update failures?</a> <a href="#fnref:troubleshoot-nodegroup-update-failures" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+    <li id="fn:eks-managed-node-group-update-issue" role="doc-endnote">
+      <p><a href="https://repost.aws/knowledge-center/eks-managed-node-group-update">How can I troubleshoot managed node group update issues for Amazon EKS?</a> <a href="#fnref:eks-managed-node-group-update-issue" class="reversefootnote" role="doc-backlink">&#8617;</a></p>
+    </li>
+  </ol>
+</div>
+
+                <div class="clearfix"></div>
+			</div>
+
+            <!-- Post Date -->
+            <p>
+            <small>
+                <span class="post-date"><time class="post-date" datetime="2023-06-03">03 Jun 2023</time></span>           
+                
+                </small>
+            </p>
+            
+			
+            
+            <!-- Prev/Next -->
+            <div class="row PageNavigation mt-4 prevnextlinks d-flex justify-content-between">
+              
+                <div class="col-md-6 rightborder pl-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/troubleshooting-eks-Ec2SubnetInvalidConfiguration-error/">&laquo; Troubleshooting EKS Managed Node Group Ec2SubnetInvalidConfiguration Error</a>
+                </div>
+              
+              
+                <div class="col-md-6 text-right pr-0">
+                    <a class="thepostlink" href="https://easontechtalk.com/utilize-eks-cluster-health-status/">Utilize EKS Cluster Health Status to monitor your cluster &raquo;</a>
+                </div>
+              
+            </div>
+            <!-- End Prev/Next -->
+            
+            
+             <!-- Author Box -->
+                				
+				<div class="row post-top-meta">
+					<div class="col-md-2">
+						<img class="author-thumb" src="/assets/images/authors/eason.jpg" alt="Eason Cao">
+					</div>
+					<div class="col-md-10">
+						<a target="_blank" class="link-dark" href="https://easoncao.com">Eason Cao</a><a target="_blank" href="https://twitter.com/EasonTechTalk" class="btn follow">Follow</a>
+						<span class="author-description">Eason is an engineer working at FANNG and living in Europe. He was accredited as AWS Professional Solution Architect, AWS Professional DevOps Engineer and CNCF Certified Kubernetes Administrator. He started his Kubernetes journey in 2017 and enjoys solving real-world business problems.</span>						
+					</div>
+				</div>				
+                
+            
+            
+            <!-- Begin Comments
+            ================================================== -->
+            <section>
+            <div id="comments">                          
+                <section class="disqus">
+    <div id="disqus_thread"></div>
+    <script type="text/javascript">
+        var disqus_shortname = 'eason-tech-talk'; 
+        var disqus_developer = 0;
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = window.location.protocol + '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</section>
+ 
+            </div>
+            </section>
+            <!--End Comments
+            ================================================== -->
+            
+            
+
+		</div>
+		<!-- End Post -->
+
+
+        
+
+		<!-- Sidebar -->
+        <div class="col-sm-4">
+            <div class="sidebar sticky-top">        
+	<!-- Table of Content (toc) -->
+	
+		<div class="sidebar-section">
+			<h5><span>Table of Content</span></h5>
+			<ul id="toc" class="section-nav">
+<li class="toc-entry toc-h2"><a href="#how-to-identify-the-issue">How to Identify the Issue</a></li>
+<li class="toc-entry toc-h2"><a href="#common-scenarios-and-causes">Common Scenarios and Causes</a></li>
+<li class="toc-entry toc-h2"><a href="#solution-and-steps">Solution and Steps</a></li>
+<li class="toc-entry toc-h2"><a href="#summary">Summary</a></li>
+<li class="toc-entry toc-h2"><a href="#references">References</a></li>
+</ul>
+		</div>
+	
+	<!-- End Table of Content (toc) -->
+
+    <div class="sidebar-section">
+        <h5><span>Newsletter</span></h5>
+        
+
+<!-- Begin Default Newsletter Signup Form -->
+<link href="https://cdn-images.mailchimp.com/embedcode/classic-10_7.css" rel="stylesheet" type="text/css">
+<style type="text/css">
+	#mc_embed_signup{background:#fff; clear:left; }
+	/* Add your own MailChimp form style overrides in your site stylesheet or in this style block.
+	   We recommend moving this block and the preceding CSS link to the HEAD of your HTML file. */
+</style>
+<div id="mc_embed_signup">
+<form action="https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse" method="post" id="mc-embedded-subscribe-form" class="validate" target="_blank">
+	<div id="mc_embed_signup_scroll">
+	<h2>Sign up to get the update</h2>
+
+    <div class="mc-field-group">
+        <input name="entry.2059009175" type="email" id="email" class="required email" placeholder="E-mail Address" required="required">
+        <input name="entry.656138904" type="hidden" id="name" class="" placeholder="Name">
+        <input name="entry.461682337" type="hidden" id="language" value="en">
+    </div>
+	<div id="mce-responses" class="clear">
+		<div class="response" id="mce-error-response" style="display:none"></div>
+		<div class="response" id="mce-success-response" style="display:none"></div>
+	</div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+	<div style="position: absolute; left: -5000px;" aria-hidden="true"><input type="text" name="b_45bf394e4f5830ed557d64a9f_2f88109ae9" tabindex="-1" value=""></div>
+	<div class="clear"><input type="submit" value="Subscribe" name="subscribe" id="mc-embedded-subscribe" class="button"></div>
+	</div>
+</form>
+
+</div>
+<script type='text/javascript'>
+window.onload = function() {
+    $(function() {
+        $('#mc_embed_signup form').on("submit", function(e) {
+            e.preventDefault();
+            $('#mc_embed_signup #mce-error-response').hide();
+            $('#mc_embed_signup #mce-success-response').hide();
+
+            var email = $("#mc_embed_signup input#email");
+            $.ajax({
+                url: "https://docs.google.com/forms/d/e/1FAIpQLSey911rk4FWQITz4_xqIcB7qSRuQdutYYS-Sv5Zmk7flXc1Ww/formResponse",
+                type: "POST",
+                data: {
+                    'entry.2059009175': email.val()
+                    // 'entry.656138904': name,
+                    // 'entry.461682337': language,
+                },
+                cache: false,
+                crossDomain: true,
+                statusCode: {
+                    0: function() {
+                        // CORS issue may only get statsu code 0 but Google got the data
+                        $('#mc_embed_signup #mce-success-response').text('Request has been sent!').show();
+                    },
+                    200: function() {
+                        // Success message
+                        $('#mc_embed_signup #mce-success-response').text('You are in the mailing list!').show();
+                        email.val('') // clear the input
+                    },
+                    400: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    },
+                    403: function() {
+                        // Fail message
+                        $('#mc_embed_signup #mce-error-response').text('Error occur! Please review your data and try again.').show();
+                    }
+                }
+            })
+        });
+    });
+}
+</script>
+<!--End mc_embed_signup-->
+
+
+    </div>
+    <!-- div class="sidebar-section">
+        <h5><span>Your Ad Here</span></h5>
+        <img src="/assets/images/ad.png">
+    </div -->
+</div>
+
+        </div>
+
+	</div>
+
+<!-- End Article
+================================================== -->
+  
+</main>
+
+<!-- Footer
+================================================== -->    
+<footer class="footer container text-center">  
+
+  <ul class="p-0 mb-1 small">
+    
+    <li>
+      <a href="/" alt="Home">Home</a>
+    </li>
+    
+    <li>
+      <a href="/privacy-policy/" alt="Privacy Policy">Privacy Policy</a>
+    </li>
+    
+    </ul>
+    <div class="copyright small">
+       Copyright © Eason Tech Talk. All rights reserved.
+    </div>
+</footer>
+
+<!-- JavaScript
+================================================== -->    
+<script src="/assets/js/jquery.min.js"></script>   
+<script src="/assets/js/bootstrap.min.js"></script>   
+<script src="/assets/js/theme.js"></script>    
+    
+</body>
+    
+</html>
